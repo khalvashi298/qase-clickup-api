@@ -1,30 +1,44 @@
+from flask import Flask, jsonify, Response
 import requests
 import re
 import json
-from flask import Flask, jsonify, Response
 
 app = Flask(__name__)
 
-# --- QASE CONFIG ---
+# QASE და CLICKUP პარამეტრები
 QASE_API_TOKEN = "899e1d184ff7c82a3c1d13a624c496d3c97f4b41f03916c5a01745c20159f5b8"
 PROJECT_CODE = "DRESSUP"
-
-# --- CLICKUP CONFIG ---
 CLICKUP_TOKEN = "pk_188468937_C74O5LJ8IMKNHTPMTC5QAHGGKW3U9I6Z"
 CLICKUP_LIST_ID_DRESSUP = "901807146872"
 CLICKUP_DEFAULT_STATUS = "to do"
 
-# --- HEADERS ---
+# Header-ები
 qase_headers = {
     "Token": QASE_API_TOKEN,
     "Content-Type": "application/json"
 }
-
 clickup_headers = {
     "Authorization": CLICKUP_TOKEN,
     "Content-Type": "application/json"
 }
 
+# ✅ ეს არის მთავარი გვერდი "/" (ღილაკით)
+@app.route("/")
+def home():
+    return """
+    <html>
+    <head><title>Qase ➜ ClickUp</title></head>
+    <body style="font-family:sans-serif; padding:30px;">
+        <h2>Qase ➜ ClickUp გადამტანი</h2>
+        <p>გადაიტანე ტესტ ქეისები ClickUp-ში</p>
+        <a href="/send_testcases">
+            <button style="padding:10px 20px; font-size:16px;">გადაიტანე ტესტ ქეისები</button>
+        </a>
+    </body>
+    </html>
+    """
+
+# ✅ ტესტ ქეისების გადატანა
 @app.route('/send_testcases', methods=['GET'])
 def send_testcases():
     url = f"https://api.qase.io/v1/case/{PROJECT_CODE}?limit=20"
