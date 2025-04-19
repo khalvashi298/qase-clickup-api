@@ -17,11 +17,11 @@ CLICKUP_HEADERS = {
 }
 
 # --- QASE CONFIG ---
-QASE_API_TOKEN = "899e1d184ff7c82a3c1d13a624c496d3c97f4b41f03916c5a01745c20159f5b8"
+QASE_API_TOKEN = "dd203d20ea7992c881633c69c093d0509997d86687fd317141fcfaba9bc5d71c"
 PROJECT_CODE = "DRESSUP"
 QASE_API_URL = f"https://api.qase.io/v1/case/{PROJECT_CODE}?limit=100"
 QASE_HEADERS = {
-    "Token": QASE_API_TOKEN,
+    "Authorization": QASE_API_TOKEN,
     "Content-Type": "application/json"
 }
 
