@@ -8,6 +8,10 @@ app = Flask(__name__)
 
 CLICKUP_API_URL = "https://api.clickup.com/api/v2/list/901807146872/task"
 CLICKUP_API_TOKEN = "pk_188468937_C74O5LJ8IMKNHTPMTC5QAHGGKW3U9I6Z"
+CLICKUP_HEADERS = {
+    "Authorization": CLICKUP_API_TOKEN,
+    "Content-Type": "application/json"
+}
 
 # Assignee mapping (Qase name → ClickUp user ID)
 known_testers = {
@@ -51,6 +55,28 @@ def save_sent_bug(key):
     with open("sent_bugs.txt", "a", encoding="utf-8") as file:
         file.write(f"{key}\n")
 
+def is_duplicate_open(key: str) -> bool:
+    """
+    Check if a bug with the same key exists in ClickUp and is not closed yet
+    """
+    url = "https://api.clickup.com/api/v2/team"
+    team_id = "90181092380"
+    params = {
+        "archived": False,
+        "include_closed": True,
+        "page": 0
+    }
+    tasks_url = f"https://api.clickup.com/api/v2/team/{team_id}/task"
+    res = requests.get(tasks_url, headers=CLICKUP_HEADERS, params=params)
+    if res.status_code != 200:
+        return False
+    for task in res.json().get("tasks", []):
+        if key in task.get("description", ""):
+            status = task.get("status", {}).get("status", "").lower()
+            if status not in ["closed", "done", "fixed"]:
+                return True  # found same content, not yet closed
+    return False
+
 @app.route("/send_testcases", methods=["POST"])
 def send_testcases():
     data = request.get_json()
@@ -62,6 +88,7 @@ def send_testcases():
         title = test.get("title", "")
         actual_result = test.get("actual_result", "")
         description = test.get("description", "")
+        steps = test.get("steps", [])
 
         # ✅ ნაბიჯი 1: dressup keyword filter
         if "dressup" not in title.lower() and "dressup" not in actual_result.lower():
@@ -77,12 +104,17 @@ def send_testcases():
         # ✅ ნაბიჯი 4: ამოვიღოთ Device info Description-იდან
         device_info = extract_device_info(description)
 
-        # ✅ ნაბიჯი 5: დუბლიკატის შემოწმება
-        unique_key = f"{title.strip().lower()}::{assignee_id}"
-        if unique_key in sent_bugs:
+        # ✅ ნაბიჯი 5: დუბლიკატის შემოწმება ნაბიჯებით, ტესტერისგან დამოუკიდებლად
+        combined_steps = " ".join([
+            f"{s.get('action', '').strip().lower()} {s.get('expected_result', '').strip().lower()}"
+            for s in steps
+        ])
+        unique_key = combined_steps.strip()
+
+        if unique_key in sent_bugs and is_duplicate_open(unique_key):
             continue
 
-        bug_description = f"📱 მოწყობილობა: {device_info}\n\n🔍 მიმდინარე შედეგი:\n{actual_result}\n\n📌 მოსალოდნელი შედეგი:\n[აქ ჩაწერე მოსალოდნელი შედეგი]"
+        bug_description = f"📱 მოწყობილობა: {device_info}\n\n🔍 მიმდინარე შედეგი:\n{actual_result}\n\n📌 მოსალოდნელი შედეგი:\n[აქ ჩაწერე მოსალოდნელი შედეგი]\n\n🔑 KEY: {unique_key}"
 
         payload = {
             "name": f"[BUG] {title}",
@@ -93,8 +125,7 @@ def send_testcases():
         }
 
         # Uncomment this to actually send to ClickUp
-        # headers = {"Authorization": CLICKUP_API_TOKEN, "Content-Type": "application/json"}
-        # res = requests.post(CLICKUP_API_URL, headers=headers, json=payload)
+        # res = requests.post(CLICKUP_API_URL, headers=CLICKUP_HEADERS, json=payload)
 
         created_defects.append(payload)
         save_sent_bug(unique_key)
