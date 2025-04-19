@@ -44,14 +44,13 @@ def extract_device_info(description: str) -> str:
             return line.strip()
     return lines[0].strip() if lines else "მოწყობილობა არ არის მითითებული"
 
-def format_steps_list(steps):
+def format_steps_numbered(steps):
     if not steps:
         return "[ნაბიჯები არ მოიძებნა]"
     output = []
-    for i, s in enumerate(steps):
-        action = s.get("action", "").strip()
-        expected = s.get("expected_result", "").strip()
-        output.append(f"{i+1}. {action} → {expected}")
+    for i, step in enumerate(steps):
+        action = step.get("action", "").strip()
+        output.append(f"{i+1}. {action}")
     return "\n".join(output)
 
 def load_sent_bugs():
@@ -120,18 +119,16 @@ def send_testcases():
         priority = 1 if severity == "Critical" else 2 if severity == "High" else 3 if severity == "Low" else None
         assignee_name, assignee_id = extract_assignee(f"{title} {actual_result}")
         device_info = extract_device_info(description)
-        step_list = format_steps_list(steps)
+        step_list = format_steps_numbered(steps)
 
         combined_steps = " ".join([
-            f"{s.get('action', '').strip().lower()} {s.get('expected_result', '').strip().lower()}"
-            for s in steps
+            s.get('action', '').strip().lower() for s in steps
         ])
         unique_key = combined_steps.strip()
 
         if unique_key in sent_bugs and is_duplicate_open(unique_key):
             continue
 
-        # Remove name and severity from title if included
         clean_title = re.sub(r" ?(Critical|High|Low)", "", title, flags=re.IGNORECASE)
         for name in known_testers.keys():
             clean_title = clean_title.replace(name.title(), "").strip()
@@ -147,7 +144,6 @@ def send_testcases():
         }
 
         res = requests.post(CLICKUP_API_URL, headers=CLICKUP_HEADERS, json=payload)
-
         created_defects.append(payload)
         save_sent_bug(unique_key)
 
