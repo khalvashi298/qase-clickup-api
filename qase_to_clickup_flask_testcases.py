@@ -132,7 +132,7 @@ def send_testcases():
         }
 
         # Uncomment this to actually send to ClickUp
-        # res = requests.post(CLICKUP_API_URL, headers=CLICKUP_HEADERS, json=payload)
+        res = requests.post(CLICKUP_API_URL, headers=CLICKUP_HEADERS, json=payload)
 
         created_defects.append(payload)
         save_sent_bug(unique_key)
