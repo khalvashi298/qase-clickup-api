@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "title": "DressUp რეგისტრაციის ბაგი - Maia Khalvashi Critical",
+      "description": "მოწყობილობა: Samsung A52\nტესტერი: Maia Khalvashi",
+      "actual_result": "დაფიქსირდა შეცდომა dressup ვალიდური მონაცემების მიუხედავად",
+      "steps": [
+        {
+          "action": "გახსენი dressup.ge",
+          "expected_result": "საიტი უნდა ჩაიტვირთოს წარმატებით"
+        },
+        {
+          "action": "დააჭირე რეგისტრაციის ღილაკს",
+          "expected_result": "გახელდეს რეგისტრაციის ფორმა"
+        },
+        {
+          "action": "შეიყვანე ვალიდური მონაცემები და დააჭირე რეგისტრაციას",
+          "expected_result": "მომხმარებელი უნდა დარეგისტრირდეს წარმატებით"
+        }
+      ]
+    }
+  ]
+}

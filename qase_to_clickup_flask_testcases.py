@@ -1,7 +1,7 @@
 import os
 import re
 import json
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template_string
 import requests
 
 app = Flask(__name__)
@@ -56,9 +56,6 @@ def save_sent_bug(key):
         file.write(f"{key}\n")
 
 def is_duplicate_open(key: str) -> bool:
-    """
-    Check if a bug with the same key exists in ClickUp and is not closed yet
-    """
     url = "https://api.clickup.com/api/v2/team"
     team_id = "90181092380"
     params = {
@@ -74,12 +71,29 @@ def is_duplicate_open(key: str) -> bool:
         if key in task.get("description", ""):
             status = task.get("status", {}).get("status", "").lower()
             if status not in ["closed", "done", "fixed"]:
-                return True  # found same content, not yet closed
+                return True
     return False
+
+@app.route("/")
+def home():
+    return render_template_string('''
+        <html>
+        <head><title>Qase → ClickUp</title></head>
+        <body style="font-family:Arial;padding:2rem;">
+            <h2>Qase → ClickUp ინტეგრაცია</h2>
+            <p>დააჭირე ქვემოთ ღილაკს ტესტ ქეისების გადასატანად:</p>
+            <form action="/send_testcases" method="post">
+                <input type="submit" value="გადაიტანე ტესტ ქეისები">
+            </form>
+        </body>
+        </html>
+    ''')
 
 @app.route("/send_testcases", methods=["POST"])
 def send_testcases():
-    data = request.get_json()
+    with open("testcases.json", "r", encoding="utf-8") as f:
+        data = json.load(f)
+
     testcases = data.get("cases", [])
     created_defects = []
     sent_bugs = load_sent_bugs()
@@ -90,21 +104,14 @@ def send_testcases():
         description = test.get("description", "")
         steps = test.get("steps", [])
 
-        # ✅ ნაბიჯი 1: dressup keyword filter
         if "dressup" not in title.lower() and "dressup" not in actual_result.lower():
             continue
 
-        # ✅ ნაბიჯი 2: ამოვიღოთ severity
         severity = extract_severity(actual_result, title)
         priority = 1 if severity == "Critical" else 2 if severity == "High" else 3 if severity == "Low" else None
-
-        # ✅ ნაბიჯი 3: ამოვიღოთ Assignee (ტესტერის სახელი)
         assignee_id = extract_assignee(f"{title} {actual_result}")
-
-        # ✅ ნაბიჯი 4: ამოვიღოთ Device info Description-იდან
         device_info = extract_device_info(description)
 
-        # ✅ ნაბიჯი 5: დუბლიკატის შემოწმება ნაბიჯებით, ტესტერისგან დამოუკიდებლად
         combined_steps = " ".join([
             f"{s.get('action', '').strip().lower()} {s.get('expected_result', '').strip().lower()}"
             for s in steps
@@ -138,3 +145,4 @@ def send_testcases():
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
