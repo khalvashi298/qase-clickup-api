@@ -6,15 +6,20 @@ import requests
 
 app = Flask(__name__)
 
-CLICKUP_API_URL = "https://api.clickup.com/api/v2/list/901807146872/task"
-CLICKUP_API_TOKEN = "pk_188468937_C74O5LJ8IMKNHTPMTC5QAHGGKW3U9I6Z"
-QASE_API_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiI5ZTg4ZGIwNC1hMzBhLTQzZGMtODgxMi00NDgyZWM5OTNiYzgiLCJpc3MiOiJkaWdpZ2l0YWxodWIifQ.38_9Z0kJS3T61zG-bMGGswHj7B6SH2uN82aAs0y3v9Y"
-QASE_PROJECT_CODE = "DRESSUP"
-QASE_API_URL = f"https://api.qase.io/v1/case/{QASE_PROJECT_CODE}?limit=100"
+# --- CLICKUP CONFIG ---
+CLICKUP_TOKEN = "pk_188468937_C74O5LJ8IMKNHTPMTC5QAHGGKW3U9I6Z"
+CLICKUP_LIST_ID_DRESSUP = "901807146872"
+CLICKUP_DEFAULT_STATUS = "to do"
+CLICKUP_API_URL = f"https://api.clickup.com/api/v2/list/{CLICKUP_LIST_ID_DRESSUP}/task"
 CLICKUP_HEADERS = {
-    "Authorization": CLICKUP_API_TOKEN,
+    "Authorization": CLICKUP_TOKEN,
     "Content-Type": "application/json"
 }
+
+# --- QASE CONFIG ---
+QASE_API_TOKEN = "899e1d184ff7c82a3c1d13a624c496d3c97f4b41f03916c5a01745c20159f5b8"
+PROJECT_CODE = "DRESSUP"
+QASE_API_URL = f"https://api.qase.io/v1/case/{PROJECT_CODE}?limit=100"
 QASE_HEADERS = {
     "Token": QASE_API_TOKEN,
     "Content-Type": "application/json"
@@ -26,8 +31,8 @@ known_testers = {
     # დაამატე სხვა ტესტერებიც საჭიროებისამებრ
 }
 
-def extract_severity(text: str) -> str:
-    text = text.lower()
+def extract_severity(actual_result: str, title: str) -> str:
+    text = f"{actual_result.lower()} {title.lower()}"
     if "critical" in text:
         return "Critical"
     elif "high" in text:
@@ -57,7 +62,8 @@ def format_steps_numbered(steps):
     output = []
     for i, step in enumerate(steps):
         action = step.get("action", "").strip()
-        output.append(f"{i+1}. {action}")
+        expected = step.get("expected_result", "").strip()
+        output.append(f"{i+1}. {action}\nᲛოსალოდნელი შედეგი: {expected}")
     return "\n".join(output)
 
 def load_sent_bugs():
@@ -108,27 +114,33 @@ def home():
 def send_testcases():
     response = requests.get(QASE_API_URL, headers=QASE_HEADERS)
     if response.status_code != 200:
-        return jsonify({"status": "error", "message": "Qase API error"}), 500
+        return jsonify({"status": "error", "message": "Qase API error."}), 500
 
-    testcases = response.json().get("result", {}).get("entities", [])
-    created = 0
+    data = response.json()
+    testcases = data.get("result", {}).get("entities", [])
+
+    created_defects = []
     sent_bugs = load_sent_bugs()
-    
+
     for test in testcases:
         title = test.get("title", "")
+        actual_result = test.get("actual_result", "")
         description = test.get("description", "")
         steps = test.get("steps", [])
 
-        if "dressup" not in title.lower() and "dressup" not in description.lower():
+        if "dressup" not in title.lower() and "dressup" not in actual_result.lower():
             continue
 
-        severity = extract_severity(title + " " + description)
+        severity = extract_severity(actual_result, title)
         priority = 1 if severity == "Critical" else 2 if severity == "High" else 3 if severity == "Low" else None
-        assignee_name, assignee_id = extract_assignee(title + " " + description)
+        assignee_name, assignee_id = extract_assignee(f"{title} {actual_result}")
         device_info = extract_device_info(description)
         step_list = format_steps_numbered(steps)
 
-        unique_key = " ".join([s.get("action", "").strip().lower() for s in steps])
+        combined_steps = " ".join([
+            s.get('action', '').strip().lower() for s in steps
+        ])
+        unique_key = combined_steps.strip()
 
         if unique_key in sent_bugs and is_duplicate_open(unique_key):
             continue
@@ -137,26 +149,25 @@ def send_testcases():
         for name in known_testers.keys():
             clean_title = clean_title.replace(name.title(), "").strip()
 
-        content = f"📱 მოწყობილობა: {device_info}\n\n📋 ნაბიჯები:\n{step_list}\n\n🔍 მიმდინარე შედეგი:\n[აქ ჩაწერე მიმდინარე შედეგი]\n\n📌 მოსალოდნელი შედეგი:\n[აქ ჩაწერე მოსალოდნელი შედეგი]\n\n🔑 KEY: {unique_key}"
+        bug_description = f"📱 მოწყობილობა: {device_info}\n\n📋 ნაბიჯები:\n{step_list}\n\n🔍 მიმდინარე შედეგი:\n{actual_result}\n\n🔑 KEY: {unique_key}"
 
         payload = {
             "name": f"[BUG] {clean_title}",
-            "description": content,
+            "description": bug_description,
             "assignees": [assignee_id] if assignee_id else [],
             "priority": priority,
             "tags": ["auto-imported", "qase"]
         }
 
         res = requests.post(CLICKUP_API_URL, headers=CLICKUP_HEADERS, json=payload)
-        if res.status_code == 200:
-            save_sent_bug(unique_key)
-            created += 1
+        created_defects.append(payload)
+        save_sent_bug(unique_key)
 
     return jsonify({
         "status": "ok",
-        "message": f"{created} ტესტ ქეისი დაემატა ClickUp-ში."
+        "message": f"{len(created_defects)} ტესტ ქეისი დაემატა ClickUp-ში.",
+        "created": created_defects
     })
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
