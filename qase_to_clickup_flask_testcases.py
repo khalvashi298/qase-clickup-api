@@ -8,8 +8,15 @@ app = Flask(__name__)
 
 CLICKUP_API_URL = "https://api.clickup.com/api/v2/list/901807146872/task"
 CLICKUP_API_TOKEN = "pk_188468937_C74O5LJ8IMKNHTPMTC5QAHGGKW3U9I6Z"
+QASE_API_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJqdGkiOiI5ZTg4ZGIwNC1hMzBhLTQzZGMtODgxMi00NDgyZWM5OTNiYzgiLCJpc3MiOiJkaWdpZ2l0YWxodWIifQ.38_9Z0kJS3T61zG-bMGGswHj7B6SH2uN82aAs0y3v9Y"
+QASE_PROJECT_CODE = "DRESSUP"
+QASE_API_URL = f"https://api.qase.io/v1/case/{QASE_PROJECT_CODE}?limit=100"
 CLICKUP_HEADERS = {
     "Authorization": CLICKUP_API_TOKEN,
+    "Content-Type": "application/json"
+}
+QASE_HEADERS = {
+    "Token": QASE_API_TOKEN,
     "Content-Type": "application/json"
 }
 
@@ -19,8 +26,8 @@ known_testers = {
     # დაამატე სხვა ტესტერებიც საჭიროებისამებრ
 }
 
-def extract_severity(actual_result: str, title: str) -> str:
-    text = f"{actual_result.lower()} {title.lower()}"
+def extract_severity(text: str) -> str:
+    text = text.lower()
     if "critical" in text:
         return "Critical"
     elif "high" in text:
@@ -99,32 +106,29 @@ def home():
 
 @app.route("/send_testcases", methods=["POST"])
 def send_testcases():
-    with open("testcases.json", "r", encoding="utf-8") as f:
-        data = json.load(f)
+    response = requests.get(QASE_API_URL, headers=QASE_HEADERS)
+    if response.status_code != 200:
+        return jsonify({"status": "error", "message": "Qase API error"}), 500
 
-    testcases = data.get("cases", [])
-    created_defects = []
+    testcases = response.json().get("result", {}).get("entities", [])
+    created = 0
     sent_bugs = load_sent_bugs()
-
+    
     for test in testcases:
         title = test.get("title", "")
-        actual_result = test.get("actual_result", "")
         description = test.get("description", "")
         steps = test.get("steps", [])
 
-        if "dressup" not in title.lower() and "dressup" not in actual_result.lower():
+        if "dressup" not in title.lower() and "dressup" not in description.lower():
             continue
 
-        severity = extract_severity(actual_result, title)
+        severity = extract_severity(title + " " + description)
         priority = 1 if severity == "Critical" else 2 if severity == "High" else 3 if severity == "Low" else None
-        assignee_name, assignee_id = extract_assignee(f"{title} {actual_result}")
+        assignee_name, assignee_id = extract_assignee(title + " " + description)
         device_info = extract_device_info(description)
         step_list = format_steps_numbered(steps)
 
-        combined_steps = " ".join([
-            s.get('action', '').strip().lower() for s in steps
-        ])
-        unique_key = combined_steps.strip()
+        unique_key = " ".join([s.get("action", "").strip().lower() for s in steps])
 
         if unique_key in sent_bugs and is_duplicate_open(unique_key):
             continue
@@ -133,25 +137,26 @@ def send_testcases():
         for name in known_testers.keys():
             clean_title = clean_title.replace(name.title(), "").strip()
 
-        bug_description = f"📱 მოწყობილობა: {device_info}\n\n📋 ნაბიჯები:\n{step_list}\n\n🔍 მიმდინარე შედეგი:\n{actual_result}\n\n📌 მოსალოდნელი შედეგი:\n[აქ ჩაწერე მოსალოდნელი შედეგი]\n\n🔑 KEY: {unique_key}"
+        content = f"📱 მოწყობილობა: {device_info}\n\n📋 ნაბიჯები:\n{step_list}\n\n🔍 მიმდინარე შედეგი:\n[აქ ჩაწერე მიმდინარე შედეგი]\n\n📌 მოსალოდნელი შედეგი:\n[აქ ჩაწერე მოსალოდნელი შედეგი]\n\n🔑 KEY: {unique_key}"
 
         payload = {
             "name": f"[BUG] {clean_title}",
-            "description": bug_description,
+            "description": content,
             "assignees": [assignee_id] if assignee_id else [],
             "priority": priority,
             "tags": ["auto-imported", "qase"]
         }
 
         res = requests.post(CLICKUP_API_URL, headers=CLICKUP_HEADERS, json=payload)
-        created_defects.append(payload)
-        save_sent_bug(unique_key)
+        if res.status_code == 200:
+            save_sent_bug(unique_key)
+            created += 1
 
     return jsonify({
         "status": "ok",
-        "message": f"{len(created_defects)} ტესტ ქეისი დაემატა ClickUp-ში.",
-        "created": created_defects
+        "message": f"{created} ტესტ ქეისი დაემატა ClickUp-ში."
     })
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
