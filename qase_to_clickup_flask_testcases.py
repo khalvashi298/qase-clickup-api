@@ -21,7 +21,7 @@ QASE_API_TOKEN = "dd203d20ea7992c881633c69c093d0509997d86687fd317141fcfaba9bc5d7
 PROJECT_CODE = "DRESSUP"
 QASE_API_URL = f"https://api.qase.io/v1/case/{PROJECT_CODE}?limit=100"
 QASE_HEADERS = {
-    "Authorization": QASE_API_TOKEN,
+    "Token": QASE_API_TOKEN,
     "Content-Type": "application/json"
 }
 
