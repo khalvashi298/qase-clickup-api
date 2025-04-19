@@ -44,6 +44,11 @@ def extract_device_info(description: str) -> str:
             return line.strip()
     return lines[0].strip() if lines else "მოწყობილობა არ არის მითითებული"
 
+def format_steps(steps):
+    if not steps:
+        return "[ნაბიჯები არ მოიძებნა]"
+    return "\n".join([f"{i+1}. {s.get('action', '').strip()} → {s.get('expected_result', '').strip()}" for i, s in enumerate(steps)])
+
 def load_sent_bugs():
     try:
         with open("sent_bugs.txt", "r", encoding="utf-8") as file:
@@ -56,7 +61,6 @@ def save_sent_bug(key):
         file.write(f"{key}\n")
 
 def is_duplicate_open(key: str) -> bool:
-    url = "https://api.clickup.com/api/v2/team"
     team_id = "90181092380"
     params = {
         "archived": False,
@@ -111,6 +115,7 @@ def send_testcases():
         priority = 1 if severity == "Critical" else 2 if severity == "High" else 3 if severity == "Low" else None
         assignee_id = extract_assignee(f"{title} {actual_result}")
         device_info = extract_device_info(description)
+        step_list = format_steps(steps)
 
         combined_steps = " ".join([
             f"{s.get('action', '').strip().lower()} {s.get('expected_result', '').strip().lower()}"
@@ -121,7 +126,7 @@ def send_testcases():
         if unique_key in sent_bugs and is_duplicate_open(unique_key):
             continue
 
-        bug_description = f"📱 მოწყობილობა: {device_info}\n\n🔍 მიმდინარე შედეგი:\n{actual_result}\n\n📌 მოსალოდნელი შედეგი:\n[აქ ჩაწერე მოსალოდნელი შედეგი]\n\n🔑 KEY: {unique_key}"
+        bug_description = f"📱 მოწყობილობა: {device_info}\n\n📋 ნაბიჯები:\n{step_list}\n\n🔍 მიმდინარე შედეგი:\n{actual_result}\n\n📌 მოსალოდნელი შედეგი:\n[აქ ჩაწერე მოსალოდნელი შედეგი]\n\n🔑 KEY: {unique_key}"
 
         payload = {
             "name": f"[BUG] {title}",
@@ -131,7 +136,6 @@ def send_testcases():
             "tags": ["auto-imported", "qase"]
         }
 
-        # Uncomment this to actually send to ClickUp
         res = requests.post(CLICKUP_API_URL, headers=CLICKUP_HEADERS, json=payload)
 
         created_defects.append(payload)
