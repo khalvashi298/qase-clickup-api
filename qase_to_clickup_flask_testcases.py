@@ -16,7 +16,7 @@ CLICKUP_HEADERS = {
 # Assignee mapping (Qase name → ClickUp user ID)
 known_testers = {
     "maia khalvashi": 73402724
-    # სხვა ტესტერებიც შეგიძლიათ დაამატოთ
+    # დაამატე სხვა ტესტერებიც საჭიროებისამებრ
 }
 
 def extract_severity(actual_result: str, title: str) -> str:
@@ -32,8 +32,8 @@ def extract_severity(actual_result: str, title: str) -> str:
 def extract_assignee(text: str):
     for name, clickup_id in known_testers.items():
         if name in text.lower():
-            return clickup_id
-    return None
+            return name, clickup_id
+    return None, None
 
 def extract_device_info(description: str) -> str:
     if not description:
@@ -44,10 +44,15 @@ def extract_device_info(description: str) -> str:
             return line.strip()
     return lines[0].strip() if lines else "მოწყობილობა არ არის მითითებული"
 
-def format_steps(steps):
+def format_steps_list(steps):
     if not steps:
         return "[ნაბიჯები არ მოიძებნა]"
-    return "\n".join([f"{i+1}. {s.get('action', '').strip()} → {s.get('expected_result', '').strip()}" for i, s in enumerate(steps)])
+    output = []
+    for i, s in enumerate(steps):
+        action = s.get("action", "").strip()
+        expected = s.get("expected_result", "").strip()
+        output.append(f"{i+1}. {action} → {expected}")
+    return "\n".join(output)
 
 def load_sent_bugs():
     try:
@@ -113,9 +118,9 @@ def send_testcases():
 
         severity = extract_severity(actual_result, title)
         priority = 1 if severity == "Critical" else 2 if severity == "High" else 3 if severity == "Low" else None
-        assignee_id = extract_assignee(f"{title} {actual_result}")
+        assignee_name, assignee_id = extract_assignee(f"{title} {actual_result}")
         device_info = extract_device_info(description)
-        step_list = format_steps(steps)
+        step_list = format_steps_list(steps)
 
         combined_steps = " ".join([
             f"{s.get('action', '').strip().lower()} {s.get('expected_result', '').strip().lower()}"
@@ -126,10 +131,15 @@ def send_testcases():
         if unique_key in sent_bugs and is_duplicate_open(unique_key):
             continue
 
+        # Remove name and severity from title if included
+        clean_title = re.sub(r" ?(Critical|High|Low)", "", title, flags=re.IGNORECASE)
+        for name in known_testers.keys():
+            clean_title = clean_title.replace(name.title(), "").strip()
+
         bug_description = f"📱 მოწყობილობა: {device_info}\n\n📋 ნაბიჯები:\n{step_list}\n\n🔍 მიმდინარე შედეგი:\n{actual_result}\n\n📌 მოსალოდნელი შედეგი:\n[აქ ჩაწერე მოსალოდნელი შედეგი]\n\n🔑 KEY: {unique_key}"
 
         payload = {
-            "name": f"[BUG] {title}",
+            "name": f"[BUG] {clean_title}",
             "description": bug_description,
             "assignees": [assignee_id] if assignee_id else [],
             "priority": priority,
@@ -149,4 +159,3 @@ def send_testcases():
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
