@@ -21,7 +21,7 @@ QASE_API_TOKEN = "dd203d20ea7992c881633c69c093d0509997d86687fd317141fcfaba9bc5d7
 PROJECT_CODE = "DRESSUP"
 QASE_API_URL = f"https://api.qase.io/v1/case/{PROJECT_CODE}?limit=100"
 QASE_HEADERS = {
-    "Authorization": QASE_API_TOKEN,
+    "Authorization": f"Token {QASE_API_TOKEN}",
     "Content-Type": "application/json"
 }
 
@@ -63,7 +63,7 @@ def format_steps_numbered(steps):
     for i, step in enumerate(steps):
         action = step.get("action", "").strip()
         expected = step.get("expected_result", "").strip()
-        output.append(f"{i+1}. {action}\nმოსალოდნელი შედეგი: {expected}")
+        output.append(f"{i+1}. {action}\nᲛოსალოდნელი შედეგი: {expected}")
     return "\n".join(output)
 
 def load_sent_bugs():
