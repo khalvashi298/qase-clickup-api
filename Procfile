@@ -1,0 +1,1 @@
+web: gunicorn qase_to_clickup_flask_testcases:app
