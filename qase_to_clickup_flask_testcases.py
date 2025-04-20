@@ -21,7 +21,7 @@ QASE_API_TOKEN = "dd203d20ea7992c881633c69c093d0509997d86687fd317141fcfaba9bc5d7
 PROJECT_CODE = "DRESSUP"
 QASE_API_URL = f"https://api.qase.io/v1/case/{PROJECT_CODE}?limit=100"
 QASE_HEADERS = {
-    "Authorization": f"Token {QASE_API_TOKEN}",
+    "Token": QASE_API_TOKEN,
     "Content-Type": "application/json"
 }
 
@@ -110,7 +110,7 @@ def home():
         </html>
     ''')
 
-@app.route("/send_testcases", methods=["POST"])
+@app.route("/send_testcases", methods=["GET", "POST"])
 def send_testcases():
     response = requests.get(QASE_API_URL, headers=QASE_HEADERS)
     if response.status_code != 200:
