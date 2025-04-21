@@ -43,7 +43,8 @@ def home():
 @app.route('/send_testcases', methods=['GET'])
 def send_testcases():
     url = f"https://api.qase.io/v1/run/{PROJECT_CODE}?limit=50"
-    response = requests.get(url, headers=qase_headers)
+        response = requests.get(url, headers=qase_headers)
+
 
     if response.status_code != 200:
         return jsonify({"status": "error", "message": "Qase API error while retrieving test runs."}), 500
@@ -53,14 +54,58 @@ def send_testcases():
         return jsonify({"status": "ok", "message": "დაფეილდებული ტესტ ქეისები არ მოიძებნა."}), 200
 
     created = 0
-    for run in runs:
-        for case_result in run.get("cases", []):
-            if case_result.get("status") != "failed":
-                continue
+runs = response.json().get("result", {}).get("entities", [])
+for run in runs:
+    for case_result in run.get("cases", []):
+        if case_result.get("status") != "failed":
+            continue
 
-            case_id = case_result.get("case_id")
-            if not case_id:
-                continue
+        case_id = case_result.get("case_id")
+        case_url = f"https://api.qase.io/v1/case/{PROJECT_CODE}/{case_id}"
+        case_response = requests.get(case_url, headers=qase_headers)
+        if case_response.status_code != 200:
+            continue
+
+        case_data = case_response.json().get("result", {})
+        title = case_data.get("title", "Untitled Test Case")
+        description = case_data.get("description", "No description.")
+        steps = case_data.get("steps", [])
+        assignee_name = case_result.get("assignee", {}).get("full_name", "Maia Khalvashi")
+        severity = case_result.get("severity", "Medium")
+
+        steps_output = ["ნაბიჯები:"]
+        for i, step in enumerate(steps):
+            action = step.get("action", "")
+            expected = step.get("expected_result", "")
+            steps_output.append(f"{i+1}. {action} ➜ {expected}")
+        steps_text = "\n".join(steps_output)
+
+        priority_map = {
+            "Critical": 1,
+            "High": 2,
+            "Medium": 3,
+            "Low": 4
+        }
+        priority_value = priority_map.get(severity, 3)
+
+        content = f\"\"\"{description}\\n\\n{steps_text}\\n\\nმიმდინარე შედეგი:\\n{case_result.get('actual_result', '')}\\n\\nმოსალოდნელი შედეგი:\\n[აქ ჩაწერე მოსალოდნელი შედეგი]\"\"\"
+
+        payload = {
+            "name": f"[TEST CASE] {title}",
+            "content": content,
+            "status": CLICKUP_DEFAULT_STATUS,
+            "assignees": [188468937],
+            "priority": priority_value
+        }
+
+        res = requests.post(
+            f"https://api.clickup.com/api/v2/list/{CLICKUP_LIST_ID_DRESSUP}/task",
+            headers=clickup_headers,
+            json=payload
+        )
+
+        if res.status_code in [200, 201]:
+            created += 1
 
             # ამოიღე ტესტ ქეისის დეტალები
             case_url = f"https://api.qase.io/v1/case/{PROJECT_CODE}/{case_id}"
