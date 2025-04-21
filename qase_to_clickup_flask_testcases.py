@@ -37,6 +37,7 @@ def home():
 
 @app.route('/send_testcases', methods=['GET'])
 def send_testcases():
+    # 1. მიიღე ბოლო ტესტ რანები
     runs_url = f"https://api.qase.io/v1/run/{PROJECT_CODE}?limit=10"
     runs_response = requests.get(runs_url, headers=qase_headers)
 
@@ -54,6 +55,7 @@ def send_testcases():
         if not run_hash:
             continue
 
+        # 2. თითოეული რანის შედეგები (მხოლოდ failed ტესტ ქეისები)
         result_url = f"https://api.qase.io/v1/result/{PROJECT_CODE}/{run_hash}"
         result_response = requests.get(result_url, headers=qase_headers)
         if result_response.status_code != 200:
@@ -69,6 +71,7 @@ def send_testcases():
             actual_result = case_result.get("actual_result", "")
             severity = case_result.get("severity", "Medium")
 
+            # 3. ამოიღე ქეისის დეტალები
             case_url = f"https://api.qase.io/v1/case/{PROJECT_CODE}/{case_id}"
             case_response = requests.get(case_url, headers=qase_headers)
             if case_response.status_code != 200:
