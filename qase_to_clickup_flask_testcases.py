@@ -26,11 +26,11 @@ def home():
     return """
     <html>
     <head><title>Qase ➞ ClickUp Defect Transfer</title></head>
-    <body style="font-family:sans-serif; padding:30px;">
+    <body style=\"font-family:sans-serif; padding:30px;\">
         <h2>Qase ➞ ClickUp Defects Integration</h2>
         <p>გადაიტანე Qase-იდან ClickUp-ში დეფექტები</p>
         <a href="/send_defects">
-            <button style="padding:10px 20px; font-size:16px;">გადაიტანე დეფექტები</button>
+            <button style=\"padding:10px 20px; font-size:16px;\">გადაიტანე დეფექტები</button>
         </a>
     </body>
     </html>
@@ -55,7 +55,6 @@ def send_defects():
         severity = d.get("severity", "low").capitalize()
         case_id = d.get("case_id")
 
-        # Step-ები და მოწყობილობა
         device_text = ""
         steps_text = ""
         if case_id:
