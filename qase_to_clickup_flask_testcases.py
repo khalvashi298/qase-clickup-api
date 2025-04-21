@@ -50,9 +50,13 @@ def send_defects():
 
     created = 0
     for run in runs:
+        print("📋 Run Title:", run.get("title", ""))
         cases = run.get("cases", [])
+        print("📦 Cases:", json.dumps(cases, indent=2, ensure_ascii=False))
+
         for c in cases:
             status = c.get("status")
+            print("👉 CASE STATUS:", status)
             if status != "failed":
                 continue
 
@@ -65,11 +69,11 @@ def send_defects():
             steps_text = ""
             device_text = ""
 
-            # მოვითხოვოთ ტესტ ქეისის სტრუქტურა ცალკე
             case_url = f"https://api.qase.io/v1/case/{PROJECT_CODE}/{case_id}"
             case_response = requests.get(case_url, headers=qase_headers)
             if case_response.status_code == 200:
                 case_data = case_response.json().get("result", {})
+                print("🧪 CASE DATA:", json.dumps(case_data, indent=2, ensure_ascii=False))
                 device_text = case_data.get("description", "").strip()
                 steps = case_data.get("steps", [])
                 if steps:
