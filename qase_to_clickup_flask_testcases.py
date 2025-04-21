@@ -1,17 +1,16 @@
 import os
 from flask import Flask, jsonify, Response
 import requests
-import re
 import json
 
 app = Flask(__name__)
 
-# QASE და CLICKUP პარამეტრები
 QASE_API_TOKEN = "dd203d20ea7992c881633c69c093d0509997d86687fd317141fcfaba9bc5d71c"
 PROJECT_CODE = "DRESSUP"
 CLICKUP_TOKEN = "pk_188468937_C74O5LJ8IMKNHTPMTC5QAHGGKW3U9I6Z"
 CLICKUP_LIST_ID_DRESSUP = "901807146872"
 CLICKUP_DEFAULT_STATUS = "to do"
+CLICKUP_USER_ID = 188468937
 
 qase_headers = {
     "Token": QASE_API_TOKEN,
@@ -22,15 +21,14 @@ clickup_headers = {
     "Content-Type": "application/json"
 }
 
-# 🔹 მთავარი გვერდი ღილაკით
 @app.route("/")
 def home():
     return """
     <html>
-    <head><title>Qase ➜ ClickUp დეფექტების გადატანა</title></head>
+    <head><title>Qase ➞ ClickUp Defect Transfer</title></head>
     <body style="font-family:sans-serif; padding:30px;">
-        <h2>Qase ➜ ClickUp დეფექტების გადამტანი</h2>
-        <p>გადაიტანე მხოლოდ ის დეფექტები, რაც Qase-შია შექმნილი</p>
+        <h2>Qase ➞ ClickUp Defects Integration</h2>
+        <p>გადაიტანე Qase-იდან ClickUp-ში დეფექტები</p>
         <a href="/send_defects">
             <button style="padding:10px 20px; font-size:16px;">გადაიტანე დეფექტები</button>
         </a>
@@ -38,7 +36,6 @@ def home():
     </html>
     """
 
-# 🔹 მხოლოდ Defect-ების გადატანა
 @app.route('/send_defects', methods=['GET'])
 def send_defects():
     url = f"https://api.qase.io/v1/defect/{PROJECT_CODE}?limit=100"
@@ -56,10 +53,9 @@ def send_defects():
         title = d.get("title", "Untitled defect")
         description = d.get("actual_result", "No description.")
         severity = d.get("severity", "low").capitalize()
-        assignee_name = d.get("assignee", {}).get("full_name", "Maia Khalvashi")
         case_id = d.get("case_id")
 
-        # 🎯 Step-ები და მოწყობილობის ამოღება
+        # Step-ები და მოწყობილობა
         device_text = ""
         steps_text = ""
         if case_id:
@@ -76,39 +72,32 @@ def send_defects():
                         expected = step.get("expected_result", "")
                         steps_text += f"{i+1}. {action} ➜ {expected}\n"
 
-        # 🎯 Priority mapping
         priority_map = {
             "Critical": 1,
             "High": 2,
             "Medium": 3,
             "Low": 4
         }
-        priority_value = priority_map.get(severity, 3)  # Default to Normal if unknown
+        priority_value = priority_map.get(severity, 3)
 
         content = f"""მოწყობილობა:
-{device_text}
-
-ტესტერი: {assignee_name}
-Severity: {severity}
-Priority: {"Urgent" if priority_value == 1 else severity}
-
-{steps_text}
+{device_text}{steps_text}
 
 მიმდინარე შედეგი:
 {description}
 
 მოსალოდნელი შედეგი:
-[აქ ჩაწერე მოსალოდნელი შედეგი]
+[აქ ჩაცერე მოსალოდნელი შედეგი]
 
 დამატებითი ფოტო/ვიდეო მასალა:
-[აქ ჩასვი საჭირო მტკიცებულებები]
+[აქ ჩასვი სასრირო მსამწელი]
 """
 
         payload = {
             "name": f"[დეფექტი] {title}",
             "content": content,
             "status": CLICKUP_DEFAULT_STATUS,
-            "assignees": [188468937],  # Maia's ClickUp ID
+            "assignees": [CLICKUP_USER_ID],
             "priority": priority_value
         }
 
@@ -123,7 +112,7 @@ Priority: {"Urgent" if priority_value == 1 else severity}
 
     სიტყვა = "დეფექტი" if created == 1 else "დეფექტი"
     return Response(
-        json.dumps({"status": "ok", "message": f"{created} {სიტყვა} გადავიდა ClickUp-ში."}, ensure_ascii=False),
+        json.dumps({"status": "ok", "message": f"{created} {სიტყვა} გადაგავიდა ClickUp-ში."}, ensure_ascii=False),
         content_type="application/json"
     )
 
