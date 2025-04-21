@@ -28,7 +28,7 @@ def home():
     <head><title>Qase ➞ ClickUp Defect Transfer</title></head>
     <body style=\"font-family:sans-serif; padding:30px;\">
         <h2>Qase ➞ ClickUp Defects Integration</h2>
-        <p>გადაიტანე Qase-იდან ClickUp-ში დეფექტები</p>
+        <p>გადაიტანე Qase-დან ClickUp-ში მხოლოდ დეფექტები</p>
         <a href=\"/send_defects\">
             <button style=\"padding:10px 20px; font-size:16px;\">გადაიტანე დეფექტები</button>
         </a>
@@ -38,55 +38,56 @@ def home():
 
 @app.route('/send_defects', methods=['GET'])
 def send_defects():
-    url = f"https://api.qase.io/v1/defect/{PROJECT_CODE}?limit=100"
+    url = f"https://api.qase.io/v1/run/{PROJECT_CODE}?limit=100"
     response = requests.get(url, headers=qase_headers)
 
     if response.status_code != 200:
-        return jsonify({"status": "error", "message": "Qase API defect endpoint error."}), 500
+        return jsonify({"status": "error", "message": "Qase API error while getting runs."}), 500
 
-    defects = response.json().get("result", {}).get("entities", [])
-    if not defects:
-        return jsonify({"status": "ok", "message": "დეფექტები არ მოიძებნა Qase-ში."}), 200
+    runs = response.json().get("result", {}).get("entities", [])
+    if not runs:
+        return jsonify({"status": "ok", "message": "არცერთი ტესტის გაშვების შედეგი არ მოიძებნა."}), 200
 
     created = 0
-    for d in defects:
-        title = d.get("title", "Untitled defect")
-        description = d.get("actual_result", "No description.")
-        severity = d.get("severity", "low").capitalize()
-        case_id = d.get("case_id")
+    for run in runs:
+        cases = run.get("cases", [])
+        for c in cases:
+            status = c.get("status")
+            if status != "failed":
+                continue
 
-        device_text = ""
-        steps_text = ""
-        if case_id:
+            title = c.get("case", {}).get("title", "Untitled defect")
+            case_id = c.get("case_id")
+            description = c.get("actual_result", "[არ არის აღწერილი]")
+            severity = c.get("severity", "Medium")
+            assignee_name = c.get("assignee", {}).get("full_name", "გაუცნობია")
+
+            steps_text = ""
+            device_text = ""
+
+            # მოვითხოვოთ ტესტ ქეისის სტრუქტურა ცალკე
             case_url = f"https://api.qase.io/v1/case/{PROJECT_CODE}/{case_id}"
             case_response = requests.get(case_url, headers=qase_headers)
             if case_response.status_code == 200:
                 case_data = case_response.json().get("result", {})
                 device_text = case_data.get("description", "").strip()
-
-                # აქ ვამოწმებთ სთეფების არსებობას
-                steps = case_data.get("steps")
-                if steps and isinstance(steps, list) and len(steps) > 0:
+                steps = case_data.get("steps", [])
+                if steps:
                     steps_text = "\n\nნაბიჯები:\n"
-                    for i, step in enumerate(steps):
-                        action = step.get("action", "").strip()
-                        expected = step.get("expected_result", "").strip()
-                        if action or expected:
-                            steps_text += f"{i+1}. {action} ➜ {expected}\n"
-                else:
-                    steps_text = "\n\nნაბიჯები:\n[სტეპები ვერ მოიძებნა]\n"
-            else:
-                steps_text = "\n\nნაბიჯები:\n[ტესტ ქეისი ვერ წაიკითხა API-მ]\n"
+                    for i, s in enumerate(steps):
+                        action = s.get("action", "")
+                        expected = s.get("expected_result", "")
+                        steps_text += f"{i+1}. {action} ➜ {expected}\n"
 
-        priority_map = {
-            "Critical": 1,
-            "High": 2,
-            "Medium": 3,
-            "Low": 4
-        }
-        priority_value = priority_map.get(severity, 3)
+            priority_map = {
+                "Critical": 1,
+                "High": 2,
+                "Medium": 3,
+                "Low": 4
+            }
+            priority_value = priority_map.get(severity, 3)
 
-        content = f"""
+            content = f"""
 მოწყობილობა:
 {device_text}{steps_text}
 
@@ -94,28 +95,28 @@ def send_defects():
 {description}
 
 მოსალოდნელი შედეგი:
-[აქ ჩასაწერია მოსალოდნელი შედეგი]
+[აქ ჩაწერე მოსალოდნელი შედეგი]
 
 დამატებითი ფოტო/ვიდეო მასალა:
-[აქ ჩასაწერია საჭირო მასალა]
+[აქ ჩასვი საჭირო მასალა]
 """
 
-        payload = {
-            "name": f"[დეფექტი] {title}",
-            "content": content,
-            "status": CLICKUP_DEFAULT_STATUS,
-            "assignees": [CLICKUP_USER_ID],
-            "priority": priority_value
-        }
+            payload = {
+                "name": f"[დეფექტი] {title}",
+                "content": content,
+                "status": CLICKUP_DEFAULT_STATUS,
+                "assignees": [CLICKUP_USER_ID],
+                "priority": priority_value
+            }
 
-        res = requests.post(
-            f"https://api.clickup.com/api/v2/list/{CLICKUP_LIST_ID_DRESSUP}/task",
-            headers=clickup_headers,
-            json=payload
-        )
+            res = requests.post(
+                f"https://api.clickup.com/api/v2/list/{CLICKUP_LIST_ID_DRESSUP}/task",
+                headers=clickup_headers,
+                json=payload
+            )
 
-        if res.status_code in [200, 201]:
-            created += 1
+            if res.status_code in [200, 201]:
+                created += 1
 
     სიტყვა = "დეფექტი" if created == 1 else "დეფექტი"
     return Response(
