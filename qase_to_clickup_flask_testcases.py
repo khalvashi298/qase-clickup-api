@@ -1,3 +1,4 @@
+import os
 from flask import Flask, jsonify, Response
 import requests
 import re
@@ -102,7 +103,7 @@ def send_testcases():
             json=payload
         )
 
-        if res.status_code == 200:
+        if res.status_code == 201:
             created += 1
 
     return Response(
