@@ -56,14 +56,14 @@ def send_testcases():
     created = 0
 
     for run in runs:
-        run_id = run.get("id")
-        if not run_id:
+        run_hash = run.get("hash")
+        if not run_hash:
             continue
 
-        result_url = f"https://api.qase.io/v1/result/{PROJECT_CODE}/{run_id}?limit=100"
+        result_url = f"https://api.qase.io/v1/result/{PROJECT_CODE}/{run_hash}?limit=100"
         result_response = requests.get(result_url, headers=qase_headers)
         if result_response.status_code != 200:
-            logger.warning(f"Skipping run_id {run_id}, result fetch failed")
+            logger.warning(f"Skipping run_hash {run_hash}, result fetch failed")
             continue
 
         results = result_response.json().get("result", {}).get("entities", [])
