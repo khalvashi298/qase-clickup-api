@@ -24,9 +24,9 @@ clickup_headers = {
 def home():
     return """
     <html>
-    <head><title>Qase ➜ ClickUp</title></head>
+    <head><title>Qase ➔ ClickUp</title></head>
     <body style=\"font-family:sans-serif; padding:30px;\">
-        <h2>Qase ➜ ClickUp გადამტანი</h2>
+        <h2>Qase ➔ ClickUp გადამტანი</h2>
         <p>გადაიტანე მხოლოდ ჩაჭრილი ტესტ ქეისები ClickUp-ში</p>
         <a href=\"/send_testcases\">
             <button style=\"padding:10px 20px; font-size:16px;\">გადაიტანე ტესტ ქეისები</button>
@@ -51,12 +51,12 @@ def send_testcases():
     created = 0
 
     for run in runs:
-        run_hash = run.get("hash")
-        if not run_hash:
+        run_id = run.get("id")  # Use run ID instead of hash
+        if not run_id:
             continue
 
         # 2. თითოეული რანის შედეგები (მხოლოდ failed ტესტ ქეისები)
-        result_url = f"https://api.qase.io/v1/result/{PROJECT_CODE}/{run_hash}"
+        result_url = f"https://api.qase.io/v1/result/{PROJECT_CODE}/{run_id}?limit=100"
         result_response = requests.get(result_url, headers=qase_headers)
         if result_response.status_code != 200:
             continue
@@ -86,7 +86,7 @@ def send_testcases():
             for i, step in enumerate(steps):
                 action = step.get("action", "")
                 expected = step.get("expected_result", "")
-                steps_output.append(f"{i+1}. {action} ➜ {expected}")
+                steps_output.append(f"{i+1}. {action} ➔ {expected}")
             steps_text = "\n".join(steps_output)
 
             priority_map = {
