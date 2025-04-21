@@ -1,8 +1,8 @@
 import os
 from flask import Flask, jsonify, Response
 import requests
-import re
 import json
+import re
 
 app = Flask(__name__)
 
@@ -11,6 +11,7 @@ PROJECT_CODE = "DRESSUP"
 CLICKUP_TOKEN = "pk_188468937_C74O5LJ8IMKNHTPMTC5QAHGGKW3U9I6Z"
 CLICKUP_LIST_ID_DRESSUP = "901807146872"
 CLICKUP_DEFAULT_STATUS = "to do"
+CLICKUP_USER_ID = 188468937
 
 qase_headers = {
     "Token": QASE_API_TOKEN,
@@ -38,23 +39,31 @@ def home():
 
 @app.route('/send_testcases', methods=['GET'])
 def send_testcases():
-    url = f"https://api.qase.io/v1/run/{PROJECT_CODE}?limit=50"
-    response = requests.get(url, headers=qase_headers)
+    run_url = f"https://api.qase.io/v1/run/{PROJECT_CODE}?limit=5"
+    run_response = requests.get(run_url, headers=qase_headers)
 
-    if response.status_code != 200:
-        return jsonify({"status": "error", "message": "Qase API error while retrieving test runs."}), 500
+    if run_response.status_code != 200:
+        return jsonify({"status": "error", "message": "Can't fetch test runs."}), 500
 
-    runs = response.json().get("result", {}).get("entities", [])
+    runs = run_response.json().get("result", {}).get("entities", [])
     if not runs:
-        return jsonify({"status": "ok", "message": "დაფეილდებული ტესტ ქეისები არ მოიძებნა."}), 200
+        return jsonify({"status": "ok", "message": "ტესტ რანები არ მოიძებნა."}), 200
 
     created = 0
     for run in runs:
-        for case_result in run.get("cases", []):
-            if case_result.get("status") != "failed":
+        run_id = run.get("id")
+        result_url = f"https://api.qase.io/v1/result/{PROJECT_CODE}/{run_id}"
+        result_response = requests.get(result_url, headers=qase_headers)
+
+        if result_response.status_code != 200:
+            continue
+
+        results = result_response.json().get("result", {}).get("entities", [])
+        for result in results:
+            if result.get("status") != "failed":
                 continue
 
-            case_id = case_result.get("case_id")
+            case_id = result.get("case_id")
             case_url = f"https://api.qase.io/v1/case/{PROJECT_CODE}/{case_id}"
             case_response = requests.get(case_url, headers=qase_headers)
             if case_response.status_code != 200:
@@ -62,10 +71,10 @@ def send_testcases():
 
             case_data = case_response.json().get("result", {})
             title = case_data.get("title", "Untitled Test Case")
-            description = case_data.get("description", "No description.")
+            description = case_data.get("description", "")
             steps = case_data.get("steps", [])
-            assignee_name = case_result.get("assignee", {}).get("full_name", "Maia Khalvashi")
-            severity = case_result.get("severity", "Medium")
+            assignee_name = result.get("executed_by", {}).get("full_name", "Maia Khalvashi")
+            severity = result.get("severity", "Medium")
 
             steps_output = ["ნაბიჯები:"]
             for i, step in enumerate(steps):
@@ -82,13 +91,15 @@ def send_testcases():
             }
             priority_value = priority_map.get(severity, 3)
 
-            content = f"""{description}\n\n{steps_text}\n\nმიმდინარე შედეგი:\n{case_result.get('actual_result', '')}\n\nმოსალოდნელი შედეგი:\n[აქ ჩაწერე მოსალოდნელი შედეგი]"""
+            actual_result = result.get("comment", "")
+
+            content = f"""{description}\n\n{steps_text}\n\nმიმდინარე შედეგი:\n{actual_result}\n\nმოსალოდნელი შედეგი:\n[აქ ჩაწერე მოსალოდნელი შედეგი]\n\nდამატებითი ფოტო/ვიდეო მასალა:\n[აქ ჩასვი საჭირო მასალა]"""
 
             payload = {
-                "name": f"[TEST CASE] {title}",
+                "name": f"[დეფექტი] {title}",
                 "content": content,
                 "status": CLICKUP_DEFAULT_STATUS,
-                "assignees": [188468937],
+                "assignees": [CLICKUP_USER_ID],
                 "priority": priority_value
             }
 
@@ -101,7 +112,7 @@ def send_testcases():
             if res.status_code in [200, 201]:
                 created += 1
 
-    სიტყვა = "ბაგ-რეპორტი" if created == 1 else "ბაგ-რეპორტი"
+    სიტყვა = "დეფექტი" if created == 1 else "დეფექტი"
     return Response(
         json.dumps({"status": "ok", "message": f"{created} {სიტყვა} გადავიდა ClickUp-ში."}, ensure_ascii=False),
         content_type="application/json"
