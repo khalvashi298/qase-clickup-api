@@ -56,27 +56,41 @@ def send_defects():
         title = d.get("title", "Untitled defect")
         description = d.get("actual_result", "No description.")
         severity = d.get("severity", "low").capitalize()
-        assignee = d.get("assignee", {}).get("full_name", "გაუცნობია")
+        assignee_name = d.get("assignee", {}).get("full_name", "Maia Khalvashi")
         case_id = d.get("case_id")
 
-        # 🟢 ნაბიჯების ამოღება
+        # 🎯 Step-ები და მოწყობილობის ამოღება
+        device_text = ""
         steps_text = ""
         if case_id:
             case_url = f"https://api.qase.io/v1/case/{PROJECT_CODE}/{case_id}"
             case_response = requests.get(case_url, headers=qase_headers)
             if case_response.status_code == 200:
                 case_data = case_response.json().get("result", {})
+                device_text = case_data.get("description", "").strip()
                 steps = case_data.get("steps", [])
                 if steps:
-                    steps_text = "\nნაბიჯები:\n"
+                    steps_text = "\n\nნაბიჯები:\n"
                     for i, step in enumerate(steps):
                         action = step.get("action", "")
                         expected = step.get("expected_result", "")
                         steps_text += f"{i+1}. {action} ➜ {expected}\n"
 
-        # 📄 ClickUp Content
-        content = f"""დეფექტის მნიშვნელობა: {severity}
-ტესტერი: {assignee}
+        # 🎯 Priority mapping
+        priority_map = {
+            "Critical": 1,
+            "High": 2,
+            "Medium": 3,
+            "Low": 4
+        }
+        priority_value = priority_map.get(severity, 3)  # Default to Normal if unknown
+
+        content = f"""მოწყობილობა:
+{device_text}
+
+ტესტერი: {assignee_name}
+Severity: {severity}
+Priority: {"Urgent" if priority_value == 1 else severity}
 
 {steps_text}
 
@@ -93,7 +107,9 @@ def send_defects():
         payload = {
             "name": f"[დეფექტი] {title}",
             "content": content,
-            "status": CLICKUP_DEFAULT_STATUS
+            "status": CLICKUP_DEFAULT_STATUS,
+            "assignees": [188468937],  # Maia's ClickUp ID
+            "priority": priority_value
         }
 
         res = requests.post(
@@ -110,7 +126,3 @@ def send_defects():
         json.dumps({"status": "ok", "message": f"{created} {სიტყვა} გადავიდა ClickUp-ში."}, ensure_ascii=False),
         content_type="application/json"
     )
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
