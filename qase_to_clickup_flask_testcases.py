@@ -103,11 +103,12 @@ def send_testcases():
             json=payload
         )
 
-        if res.status_code == 201:
+        if res.status_code in [200, 201]:
             created += 1
 
+    სიტყვა = "ბაგ-რეპორტი" if created == 1 else "ბაგ-რეპორტი"
     return Response(
-        json.dumps({"status": "ok", "message": f"{created} ტესტ ქეისი დაემატა ClickUp-ში."}, ensure_ascii=False),
+        json.dumps({"status": "ok", "message": f"{created} {სიტყვა} გადავიდა ClickUp-ში."}, ensure_ascii=False),
         content_type="application/json"
     )
 
