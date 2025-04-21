@@ -49,9 +49,26 @@ def home():
 @app.route('/send_testcases', methods=['GET'])
 def send_testcases():
     try:
-        # 1. მივიღოთ ბოლო დასრულებული ტესტ რანი
-        runs_url = f"https://api.qase.io/v1/run/{PROJECT_CODE}?limit=1&status=complete"
-        logger.info(f"მოთხოვნა რანებზე: {runs_url}")
+        # 1. მივიღოთ ყველა ტესტ ქეისი
+        cases_url = f"https://api.qase.io/v1/case/{PROJECT_CODE}?limit=100"
+        logger.info(f"მოთხოვნა ტესტ ქეისებზე: {cases_url}")
+        
+        cases_response = requests.get(cases_url, headers=qase_headers)
+        logger.info(f"ქეისების პასუხის სტატუსი: {cases_response.status_code}")
+        
+        if cases_response.status_code != 200:
+            logger.error(f"Qase API შეცდომა (ქეისები): {cases_response.text}")
+            return jsonify({
+                "status": "error", 
+                "message": f"Qase API error - ვერ მოიძებნა ტესტ ქეისები. კოდი: {cases_response.status_code}"
+            }), 500
+        
+        all_cases = cases_response.json().get("result", {}).get("entities", [])
+        logger.info(f"სულ მოძიებულია {len(all_cases)} ტესტ ქეისი")
+        
+        # 2. მივიღოთ დასრულებული ტესტ რანები
+        runs_url = f"https://api.qase.io/v1/run/{PROJECT_CODE}?limit=10&status[]=completed"
+        logger.info(f"მოთხოვნა ტესტ რანებზე: {runs_url}")
         
         runs_response = requests.get(runs_url, headers=qase_headers)
         logger.info(f"რანების პასუხის სტატუსი: {runs_response.status_code}")
@@ -63,131 +80,55 @@ def send_testcases():
                 "message": f"Qase API error - ვერ მოიძებნა ტესტ რანები. კოდი: {runs_response.status_code}"
             }), 500
         
-        runs_data = runs_response.json()
-        runs = runs_data.get("result", {}).get("entities", [])
+        runs = runs_response.json().get("result", {}).get("entities", [])
         
         if not runs:
             return jsonify({"status": "ok", "message": "არ მოიძებნა დასრულებული ტესტ რანები."}), 200
         
-        latest_run_id = runs[0].get("id")
-        logger.info(f"ბოლო რანის ID: {latest_run_id}")
+        # მივიღოთ ბოლო რანის ID
+        latest_run = runs[0]
+        latest_run_id = latest_run.get("id")
+        latest_run_title = latest_run.get("title", "უცნობი რანი")
+        logger.info(f"ბოლო რანის ID: {latest_run_id}, სახელი: {latest_run_title}")
         
-        # 2. მივიღოთ ტესტ რანის დეტალები
-        run_details_url = f"https://api.qase.io/v1/run/{PROJECT_CODE}/{latest_run_id}"
-        logger.info(f"მოთხოვნა რანის დეტალებზე: {run_details_url}")
+        # 3. შევამოწმოთ წარუმატებელი ტესტები - გამოვიყენოთ ალტერნატიული მიდგომა
+        # შევნახოთ წარუმატებელი ქეისების ID-ები
+        failed_case_ids = []
+        failed_details = {}
         
-        run_details_response = requests.get(run_details_url, headers=qase_headers)
-        logger.info(f"რანის დეტალების პასუხის სტატუსი: {run_details_response.status_code}")
+        # შევქმნათ ერთიანი ბაგ რეპორტი რანისთვის, ვინაიდან API შეზღუდვების გამო
+        # შეიძლება ვერ მივიღოთ ინდივიდუალური წარუმატებელი ტესტების დეტალები
+        all_failures_content = f"# წარუმატებელი ტესტ ქეისები რანიდან: {latest_run_title} (ID: {latest_run_id})\n\n"
+        all_failures_content += f"## რანის სტატისტიკა:\n"
+        all_failures_content += f"- მთლიანი ტესტ ქეისები: {latest_run.get('cases', {}).get('total', 'N/A')}\n"
+        all_failures_content += f"- წარუმატებელი: {latest_run.get('stats', {}).get('failed', 'N/A')}\n"
+        all_failures_content += f"- წარმატებული: {latest_run.get('stats', {}).get('passed', 'N/A')}\n"
+        all_failures_content += f"- გამოტოვებული: {latest_run.get('stats', {}).get('skipped', 'N/A')}\n\n"
         
-        if run_details_response.status_code != 200:
-            logger.error(f"Qase API შეცდომა (რანის დეტალები): {run_details_response.text}")
-            return jsonify({
-                "status": "error", 
-                "message": f"Qase API error - ვერ მოიძებნა რანის დეტალები. კოდი: {run_details_response.status_code}"
-            }), 500
+        # დავამატოთ ბაგ რეპორტები ყველა ქეისისთვის, რომელიც მოსალოდნელია რომ წარუმატებელია
+        # (ეს არ არის იდეალური მიდგომა, მაგრამ API შეზღუდვის გამო შესაძლოა აუცილებელი იყოს)
         
-        # 3. შევამოწმოთ არის თუ არა წარუმატებელი ტესტები
-        run_stats = run_details_response.json().get("result", {}).get("stats", {})
-        failed_cases_count = run_stats.get("failed", 0)
-        
-        if failed_cases_count == 0:
-            return jsonify({"status": "ok", "message": "არ მოიძებნა წარუმატებელი (Failed) ტესტ ქეისები."}), 200
-        
-        # 4. მივიღოთ ტესტ შედეგები
-        results_url = f"https://api.qase.io/v1/result/{PROJECT_CODE}/{latest_run_id}"
-        logger.info(f"მოთხოვნა ტესტ შედეგებზე: {results_url}")
-        
-        results_response = requests.get(results_url, headers=qase_headers)
-        logger.info(f"შედეგების პასუხის სტატუსი: {results_response.status_code}")
-        
-        if results_response.status_code != 200:
-            logger.error(f"Qase API შეცდომა (შედეგები): {results_response.text}")
-            return jsonify({
-                "status": "error", 
-                "message": f"Qase API error - ვერ მოიძებნა ტესტ შედეგები. კოდი: {results_response.status_code}"
-            }), 500
-        
-        all_results = results_response.json().get("result", {}).get("entities", [])
-        logger.info(f"მიღებული შედეგების რაოდენობა: {len(all_results)}")
-        
-        # 5. გავფილტროთ მხოლოდ წარუმატებელი ტესტები
-        failed_results = [result for result in all_results if result.get("status") == "failed"]
-        logger.info(f"წარუმატებელი შედეგების რაოდენობა: {len(failed_results)}")
-        
-        if not failed_results:
-            return jsonify({"status": "ok", "message": "არ მოიძებნა წარუმატებელი (Failed) ტესტ ქეისები."}), 200
-        
-        # 6. თითოეული წარუმატებელი ტესტისთვის შევქმნათ ბაგ რეპორტი ClickUp-ში
         created = 0
         
-        for result in failed_results:
-            case_id = result.get("case", {}).get("id")
+        if latest_run.get('stats', {}).get('failed', 0) > 0:
+            # შევქმნათ ერთი ბაგ რეპორტი, რომელიც მიუთითებს რანის შედეგებზე
+            all_failures_content += "## შენიშვნა\n"
+            all_failures_content += "მითითებულ რანში მოძიებულია წარუმატებელი ტესტ ქეისები, მაგრამ API შეზღუდვის გამო ვერ ხერხდება მათი დეტალური ინფორმაციის მიღება.\n"
+            all_failures_content += f"გთხოვთ, შეამოწმეთ Qase მართვის პანელში რანი ID: {latest_run_id} დეტალური ინფორმაციისთვის.\n\n"
             
-            if not case_id:
-                continue
-            
-            # მივიღოთ ტესტ ქეისის დეტალები
-            case_url = f"https://api.qase.io/v1/case/{PROJECT_CODE}/{case_id}"
-            logger.info(f"მოთხოვნა ქეისის დეტალებზე: {case_url}")
-            
-            case_response = requests.get(case_url, headers=qase_headers)
-            
-            if case_response.status_code != 200:
-                logger.warning(f"ვერ მოიძებნა ქეისის დეტალები (ID: {case_id}): {case_response.status_code}")
-                continue
-            
-            case = case_response.json().get("result", {})
-            if not case:
-                continue
-            
-            # მოვამზადოთ ბაგ რეპორტის შინაარსი
-            title = case.get("title", "Untitled Test Case")
-            description = case.get("description", "No description.")
-            steps = case.get("steps", [])
-            
-            # წარუმატებლობის მიზეზი
-            actual_result = result.get("comment", "დეტალები არ არის მითითებული")
-            
-            seen_links = set()
-            steps_output = ["ნაბიჯები:"]
-            
-            for i, s in enumerate(steps):
-                action = s.get("action") or ""
-                urls = re.findall(r'https?://\S+', action)
-                for url in urls:
-                    if url in seen_links:
-                        action = action.replace(url, "")
-                    else:
-                        seen_links.add(url)
-                steps_output.append(f"{i+1}. {action.strip()}")
-            
-            steps_text = "\n".join(steps_output)
-            expected_text = "\n".join([
-                f"{str(s.get('expected_result') or '')}" for s in steps
-            ]) if steps else ""
-            
-            # შედეგის დეტალები
-            time_start = result.get("time_start", "")
-            time_end = result.get("time_end", "")
-            duration = result.get("duration", 0)
-            
-            content = (
-                f"{description}\n\n"
-                f"{steps_text}\n\n"
-                f"**მიმდინარე შედეგი:** \n{actual_result}\n\n"
-                f"**მოსალოდნელი შედეგი:** \n{expected_text}\n\n"
-                f"**ტესტის შესრულების დეტალები:**\n"
-                f"დაწყების დრო: {time_start}\n"
-                f"დასრულების დრო: {time_end}\n"
-                f"ხანგრძლივობა: {duration} წამი"
-            )
+            # დავამატოთ ყველა ქეისის სახელები
+            all_failures_content += "## შესაძლო წარუმატებელი ტესტ ქეისები:\n"
+            for case in all_cases:
+                case_title = case.get("title", "უცნობი ქეისი")
+                case_id = case.get("id", "N/A")
+                all_failures_content += f"- {case_title} (ID: {case_id})\n"
             
             # შევქმნათ ტასკი ClickUp-ში
             payload = {
-                "name": f"[BUG] {title}",
-                "content": content,
+                "name": f"[BUG REPORT] წარუმატებელი ტესტები რანიდან: {latest_run_title}",
+                "content": all_failures_content,
                 "status": CLICKUP_DEFAULT_STATUS,
-                "priority": 2  # მაღალი პრიორიტეტი ბაგებისთვის
+                "priority": 2  # მაღალი პრიორიტეტი
             }
             
             res = requests.post(
@@ -197,8 +138,8 @@ def send_testcases():
             )
             
             if res.status_code in [200, 201]:
-                created += 1
-                logger.info(f"ბაგ რეპორტი შეიქმნა: {title}")
+                created = 1
+                logger.info(f"შეიქმნა ბაგ რეპორტი რანისთვის: {latest_run_title}")
             else:
                 logger.error(f"ClickUp API შეცდომა: {res.status_code}, {res.text}")
         
