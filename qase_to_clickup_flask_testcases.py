@@ -63,12 +63,20 @@ def send_defects():
             if case_response.status_code == 200:
                 case_data = case_response.json().get("result", {})
                 device_text = case_data.get("description", "").strip()
-                steps = case_data.get("steps", [])
-                if steps:
+
+                # აქ ვამოწმებთ სთეფების არსებობას
+                steps = case_data.get("steps")
+                if steps and isinstance(steps, list) and len(steps) > 0:
                     steps_text = "\n\nნაბიჯები:\n"
                     for i, step in enumerate(steps):
-                        action = step.get("action", "")
-                        steps_text += f"{i+1}. {action}\n"
+                        action = step.get("action", "").strip()
+                        expected = step.get("expected_result", "").strip()
+                        if action or expected:
+                            steps_text += f"{i+1}. {action} ➜ {expected}\n"
+                else:
+                    steps_text = "\n\nნაბიჯები:\n[სტეპები ვერ მოიძებნა]\n"
+            else:
+                steps_text = "\n\nნაბიჯები:\n[ტესტ ქეისი ვერ წაიკითხა API-მ]\n"
 
         priority_map = {
             "Critical": 1,
@@ -86,10 +94,10 @@ def send_defects():
 {description}
 
 მოსალოდნელი შედეგი:
-[აქ ჩაწერე მოსალოდნელი შედეგი]
+[აქ ჩასაწერია მოსალოდნელი შედეგი]
 
 დამატებითი ფოტო/ვიდეო მასალა:
-[აქ ჩასვი საჭირო მასალა]
+[აქ ჩასაწერია საჭირო მასალა]
 """
 
         payload = {
