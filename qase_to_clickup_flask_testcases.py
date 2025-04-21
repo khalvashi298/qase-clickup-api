@@ -29,7 +29,7 @@ def home():
     <body style=\"font-family:sans-serif; padding:30px;\">
         <h2>Qase ➞ ClickUp Defects Integration</h2>
         <p>გადაიტანე Qase-იდან ClickUp-ში დეფექტები</p>
-        <a href="/send_defects">
+        <a href=\"/send_defects\">
             <button style=\"padding:10px 20px; font-size:16px;\">გადაიტანე დეფექტები</button>
         </a>
     </body>
@@ -68,8 +68,7 @@ def send_defects():
                     steps_text = "\n\nნაბიჯები:\n"
                     for i, step in enumerate(steps):
                         action = step.get("action", "")
-                        expected = step.get("expected_result", "")
-                        steps_text += f"{i+1}. {action} ➜ {expected}\n"
+                        steps_text += f"{i+1}. {action}\n"
 
         priority_map = {
             "Critical": 1,
@@ -79,17 +78,18 @@ def send_defects():
         }
         priority_value = priority_map.get(severity, 3)
 
-        content = f"""მოწყობილობა:
+        content = f"""
+მოწყობილობა:
 {device_text}{steps_text}
 
 მიმდინარე შედეგი:
 {description}
 
 მოსალოდნელი შედეგი:
-[აქ ჩაცერე მოსალოდნელი შედეგი]
+[აქ ჩაწერე მოსალოდნელი შედეგი]
 
 დამატებითი ფოტო/ვიდეო მასალა:
-[აქ ჩასვი სასრირო მსამწელი]
+[აქ ჩასვი საჭირო მასალა]
 """
 
         payload = {
