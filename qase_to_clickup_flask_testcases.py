@@ -42,9 +42,19 @@ def get_latest_run_id():
     return runs[0]["id"] if runs else None
 
 def get_failed_results(run_id):
-    url = f"https://api.qase.io/v1/result/{PROJECT_CODE}/{run_id}?status=failed&limit=100"
+    # სწორი Qase API endpoint:.Project–დან results, მერე ფილტრი run და status=failed
+    url = (
+        f"https://api.qase.io/v1/result/{PROJECT_CODE}"
+        f"?run={run_id}&status=failed&limit=100"
+    )
     resp = requests.get(url, headers=qase_headers)
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as he:
+        if resp.status_code == 404:
+            logger.warning(f"No results for run {run_id}, treating as empty list.")
+            return []
+        raise
     return resp.json().get("result", {}).get("entities", [])
 
 def get_case_details(case_id):
