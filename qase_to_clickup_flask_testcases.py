@@ -1,19 +1,16 @@
 import os
 from flask import Flask, jsonify, Response
 import requests
-import re
-import json
 
 app = Flask(__name__)
 
-# QASE და CLICKUP პარამეტრები
-QASE_API_TOKEN = "dd203d20ea7992c881633c69c093d0509997d86687fd317141fcfaba9bc5d71c"
-PROJECT_CODE = "DRESSUP"
-CLICKUP_TOKEN = "pk_188468937_C74O5LJ8IMKNHTPMTC5QAHGGKW3U9I6Z"
-CLICKUP_LIST_ID_DRESSUP = "901807146872"
-CLICKUP_DEFAULT_STATUS = "to do"
+# Qase და ClickUp პარამეტრები
+QASE_API_TOKEN   = os.getenv("QASE_API_TOKEN", "თქვენი_QASE_TOKEN")
+PROJECT_CODE     = "DRESSUP"
+CLICKUP_TOKEN    = os.getenv("CLICKUP_TOKEN", "თქვენი_CLICKUP_TOKEN")
+CLICKUP_LIST_ID  = "901807146872"
+CLICKUP_STATUS   = "to do"
 
-# Header-ები
 qase_headers = {
     "Token": QASE_API_TOKEN,
     "Content-Type": "application/json"
@@ -23,97 +20,86 @@ clickup_headers = {
     "Content-Type": "application/json"
 }
 
-# ✅ ეს არის მთავარი გვერდი "/" (ღილაკით)
-@app.route("/")
-def home():
-    return """
-    <html>
-    <head><title>Qase ➜ ClickUp</title></head>
-    <body style="font-family:sans-serif; padding:30px;">
-        <h2>Qase ➜ ClickUp გადამტანი</h2>
-        <p>გადაიტანე ტესტ ქეისები ClickUp-ში</p>
-        <a href="/send_testcases">
-            <button style="padding:10px 20px; font-size:16px;">გადაიტანე ტესტ ქეისები</button>
-        </a>
-    </body>
-    </html>
+def get_latest_run_id():
     """
+    იძენს Qase–იდან პროექტის ბოლო ტესტი‑რანის ID–ს
+    """
+    url = f"https://api.qase.io/v1/run/{PROJECT_CODE}?limit=1"
+    resp = requests.get(url, headers=qase_headers)
+    resp.raise_for_status()
+    runs = resp.json()["result"]["entities"]
+    return runs[0]["id"] if runs else None
 
-# ✅ ტესტ ქეისების გადატანა
-@app.route('/send_testcases', methods=['GET'])
-def send_testcases():
-    url = f"https://api.qase.io/v1/case/{PROJECT_CODE}?limit=20"
-    response = requests.get(url, headers=qase_headers)
+def get_failed_results(run_id):
+    """
+    იძენს ყველა провალებულ (failed) შედეგს მოცემული რანისთვის
+    """
+    url = f"https://api.qase.io/v1/result/{PROJECT_CODE}/{run_id}?status=failed&limit=100"
+    resp = requests.get(url, headers=qase_headers)
+    resp.raise_for_status()
+    return resp.json()["result"]["entities"]
 
-    if response.status_code != 200:
-        return jsonify({"status": "error", "message": "Qase API error."}), 500
+def get_case_details(case_id):
+    """
+    იძენს ტესტ‑ქეისის სრულ ინფორმაციას ID–ს მიხედვით
+    """
+    url = f"https://api.qase.io/v1/case/{PROJECT_CODE}/{case_id}"
+    resp = requests.get(url, headers=qase_headers)
+    resp.raise_for_status()
+    return resp.json()["result"]
 
-    cases = response.json().get("result", {}).get("entities", [])
+@app.route("/send_failed", methods=["GET"])
+def send_failed_cases():
+    # Qase–დან ბოლო რანის ID
+    run_id = get_latest_run_id()
+    if not run_id:
+        return jsonify({"status":"error","message":"პროექტში ტესტი‑რანები არ არსებობს."}), 404
 
-    filtered = []
-    for c in cases:
-        if isinstance(c, dict):
-            title = c.get("title", "").lower()
-            steps = c.get("steps", [])
-            combined_steps = " ".join([
-                str(step.get("action") or "") + " " + str(step.get("expected_result") or "")
-                for step in steps
-            ]).lower()
-            if "dressup" in title or "dressup" in combined_steps:
-                filtered.append(c)
-
-    if not filtered:
-        return jsonify({"status": "ok", "message": "არ მოიძებნა ტესტ ქეისი სიტყვით 'dressup'."}), 200
+    # მხოლოდ провალებული (failed) შედეგების მიღება
+    failed_results = get_failed_results(run_id)
+    if not failed_results:
+        return jsonify({"status":"ok","message":"პровალებული ტესტ‑ქეისები არ არის."}), 200
 
     created = 0
-    for case in filtered:
-        title = case.get("title", "Untitled Test Case")
-        description = case.get("description", "No description.")
-        steps = case.get("steps", [])
+    for result in failed_results:
+        case = get_case_details(result["case_id"])
 
-        seen_links = set()
-        steps_output = ["ნაბიჯები:"]
-        for i, s in enumerate(steps):
-            action = s.get("action") or ""
-            urls = re.findall(r'https?://\S+', action)
-            for url in urls:
-                if url in seen_links:
-                    action = action.replace(url, "")
-                else:
-                    seen_links.add(url)
-            steps_output.append(f"{i+1}. {action.strip()}")
+        title       = case.get("title", "Untitled")
+        description = case.get("description", "")
+        steps       = case.get("steps", [])
 
-        steps_text = "\n".join(steps_output)
+        # ნაბიჯების ჩამონათვალი
+        steps_lines = ["📝 ვიდეო ნაბიჯები:"]
+        for idx, s in enumerate(steps, start=1):
+            action = s.get("action", "").strip()
+            exp    = s.get("expected_result", "").strip()
+            steps_lines.append(f"{idx}. {action}\n   📌 მოსალოდნელი: {exp}")
 
-        expected_text = "\n".join([
-            f"{str(s.get('expected_result') or '')}" for s in steps
-        ]) if steps else ""
-
-        content = f"{description}\n\n{steps_text}\n\nმიმდინარე შედეგი: \n\n{expected_text}\n\nმოსალოდნელი შედეგი: \n\n[აქ ჩაწერე მოსალოდნელი შედეგი]"
-
-        payload = {
-            "name": f"[TEST CASE] {title}",
-            "content": content,
-            "status": CLICKUP_DEFAULT_STATUS
-        }
-
-        res = requests.post(
-            f"https://api.clickup.com/api/v2/list/{CLICKUP_LIST_ID_DRESSUP}/task",
-            headers=clickup_headers,
-            json=payload
+        # დავალების body
+        content = (
+            f"{description}\n\n"
+            + "\n".join(steps_lines)
+            + f"\n\n🚨 მიმდინარე შედეგი:\n{result.get('comment','[კომენტარი ვერ მოიძებნა]')}\n"
+            + "✅ მოსალოდნელი შედეგი:\n[შეიყვანე მოსალოდნელი შედეგი აქ]"
         )
 
-        if res.status_code in [200, 201]:
+        # ClickUp დავალების დატვირთვა
+        payload = {
+            "name": f"[FAILED] {title}",
+            "content": content,
+            "status": CLICKUP_STATUS
+        }
+        resp = requests.post(
+            f"https://api.clickup.com/api/v2/list/{CLICKUP_LIST_ID}/task",
+            headers=clickup_headers, json=payload
+        )
+        if resp.status_code in (200, 201):
             created += 1
 
-    სიტყვა = "ბაგ-რეპორტი" if created == 1 else "ბაგ-რეპორტი"
-    return Response(
-        json.dumps({"status": "ok", "message": f"{created} {სიტყვა} გადავიდა ClickUp-ში."}, ensure_ascii=False),
-        content_type="application/json"
-    )
+    # შედეგის შეტყობინება
+    msg = f"{created} დავალება(ებ) გადაიტანილია ClickUp-ში."
+    return Response(jsonify(status="ok", message=msg).data, mimetype="application/json")
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))  # ეს იწვევს Render-ის მიერ მიცემულ პორტზე გაშვებას
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
-
