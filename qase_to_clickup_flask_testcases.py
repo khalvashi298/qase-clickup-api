@@ -20,6 +20,8 @@ CLICKUP_TOKEN = os.getenv(
     "pk_188468937_C74O5LJ8IMKNHTPMTC5QAHGGKW3U9I6Z"
 )
 
+# **შენიღბული PROJECT_CODE აუცილებლად გამოაცხადეთ აქ:**
+PROJECT_CODE    = "DRESSUP"
 CLICKUP_LIST_ID = "901807146872"
 CLICKUP_STATUS  = "to do"
 
