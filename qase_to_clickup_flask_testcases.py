@@ -5,9 +5,9 @@ import requests
 app = Flask(__name__)
 
 # Qase და ClickUp პარამეტრები
-QASE_API_TOKEN   = os.getenv("QASE_API_TOKEN", "თქვენი_QASE_TOKEN")
+QASE_API_TOKEN   = os.getenv("QASE_API_TOKEN", "dd203d20ea7992c881633c69c093d0509997d86687fd317141fcfaba9bc5d71c")
 PROJECT_CODE     = "DRESSUP"
-CLICKUP_TOKEN    = os.getenv("CLICKUP_TOKEN", "თქვენი_CLICKUP_TOKEN")
+CLICKUP_TOKEN    = os.getenv("CLICKUP_TOKEN", "pk_188468937_C74O5LJ8IMKNHTPMTC5QAHGGKW3U9I6Z")
 CLICKUP_LIST_ID  = "901807146872"
 CLICKUP_STATUS   = "to do"
 
