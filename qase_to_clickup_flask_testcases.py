@@ -1,15 +1,19 @@
 import os
 import logging
-from flask import Flask, jsonify, Response
+from flask import Flask, jsonify, redirect, url_for, Response
 import requests
 
 app = Flask(__name__)
 
-# ლოგირების კონფიგურაცია
+# ========================
+#  ლოგირების კონფიგურაცია
+# ========================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# პარამეტრები
+# ========================
+#  პარამეტრები
+# ========================
 QASE_API_TOKEN = os.getenv(
     "QASE_API_TOKEN",
     "dd203d20ea7992c881633c69c093d0509997d86687fd317141fcfaba9bc5d71c"
@@ -20,21 +24,23 @@ CLICKUP_TOKEN = os.getenv(
     "pk_188468937_C74O5LJ8IMKNHTPMTC5QAHGGKW3U9I6Z"
 )
 
-# **შენიღბული PROJECT_CODE აუცილებლად გამოაცხადეთ აქ:**
 PROJECT_CODE    = "DRESSUP"
 CLICKUP_LIST_ID = "901807146872"
 CLICKUP_STATUS  = "to do"
 
-# დაბიოგინეთ, თუ ცვლადები არ არის
+# თუ ტოკენები არაა გამოსახული, დიდი პრობლემა გვაქვს
 if not QASE_API_TOKEN or not CLICKUP_TOKEN:
-    logger.error("მონაცემთა ცვლადები არ არის განსაზღვრული: QASE_API_TOKEN და CLICKUP_TOKEN")
-    # აპლიკაცია არ უნდა აგრძელებდეს სტარტს უშეცდომოდ
-    raise RuntimeError("გთხოვთ დააყენოთ QASE_API_TOKEN და CLICKUP_TOKEN გარემოს ცვლადებად")
+    logger.error("QASE_API_TOKEN ან CLICKUP_TOKEN გარემო ცვლადებად არ არის განსაზღვრული.")
+    raise RuntimeError("გთხოვთ დააყენოთ QASE_API_TOKEN და CLICKUP_TOKEN.")
 
-qase_headers = {"Token": QASE_API_TOKEN, "Content-Type": "application/json"}
+qase_headers   = {"Token": QASE_API_TOKEN, "Content-Type": "application/json"}
 clickup_headers = {"Authorization": CLICKUP_TOKEN, "Content-Type": "application/json"}
 
+# ========================
+#  ფუნქციები Qase API-თან
+# ========================
 def get_latest_run_id():
+    """ბირქმევა პროექტის ბოლო Test Run-ის ID"""
     url = f"https://api.qase.io/v1/run/{PROJECT_CODE}?limit=1"
     resp = requests.get(url, headers=qase_headers)
     resp.raise_for_status()
@@ -42,7 +48,7 @@ def get_latest_run_id():
     return runs[0]["id"] if runs else None
 
 def get_failed_results(run_id):
-    # სწორი Qase API endpoint:.Project–დან results, მერე ფილტრი run და status=failed
+    """ბირქმევა ყველა провалებული შედეგი მოცემული Run ID-სთვის"""
     url = (
         f"https://api.qase.io/v1/result/{PROJECT_CODE}"
         f"?run={run_id}&status=failed&limit=100"
@@ -50,73 +56,99 @@ def get_failed_results(run_id):
     resp = requests.get(url, headers=qase_headers)
     try:
         resp.raise_for_status()
-    except requests.HTTPError as he:
+    except requests.HTTPError:
         if resp.status_code == 404:
-            logger.warning(f"No results for run {run_id}, treating as empty list.")
+            # თუ 404-ია, უბრალოდ ცარიელ სიად ვუყურებთ
+            logger.warning(f"No results for run {run_id}, returning empty list.")
             return []
         raise
     return resp.json().get("result", {}).get("entities", [])
 
 def get_case_details(case_id):
+    """ბირქმევა კონკრეტული Test Case-ის სრული ინფორმაცია"""
     url = f"https://api.qase.io/v1/case/{PROJECT_CODE}/{case_id}"
     resp = requests.get(url, headers=qase_headers)
     resp.raise_for_status()
     return resp.json().get("result", {})
 
+# ========================
+#  Route-ები
+# ========================
+@app.route("/", methods=["GET"])
+def home():
+    # მისამართი მოთამაშეს პირდაპირ გადამისამართებს /send_failed-ზე
+    return redirect(url_for("send_failed_cases"))
+
+@app.route("/send_testcases", methods=["GET"])
+def alias_send():
+    # რჩება backward compatibility
+    return redirect(url_for("send_failed_cases"))
+
 @app.route("/send_failed", methods=["GET"])
 def send_failed_cases():
     try:
+        # 1) მივიღოთ ბოლო Run ID
         run_id = get_latest_run_id()
         if not run_id:
             return jsonify(status="error", message="პროექტში ტესტი‑რანები არ არის."), 404
 
+        # 2) მივიღოთ მხოლოდ провалებული შედეგები
         failed = get_failed_results(run_id)
         if not failed:
-            return jsonify(status="ok", message="წარუმატებელი ტესტ‑ქეისები არაა."), 200
+            return jsonify(status="ok", message="წარუმატებელი ტესტ‑ქეისები არ არის."), 200
 
         created = 0
+        # 3) თითო провალებული შედეგი გადავამუშავოთ
         for res in failed:
-            case = get_case_details(res["case_id"])
-            title = case.get("title", "Untitled")
-            desc  = case.get("description", "")
-            steps = case.get("steps", [])
+            case    = get_case_details(res["case_id"])
+            title   = (case.get("title") or "Untitled").strip()
+            desc    = (case.get("description") or "").strip()
+            comment = (res.get("comment") or "[კომენტარი]").strip()
 
-            # ავაშენოთ ტექსტი
+            steps = case.get("steps", [])
+            # 4) დავამზადოთ ნაბიჯების სიები
             lines = ["📝 ნაბიჯები:"]
             for i, step in enumerate(steps, start=1):
-                act = step.get("action","").strip()
-                exp = step.get("expected_result","").strip()
+                act = (step.get("action") or "").strip()
+                exp = (step.get("expected_result") or "").strip()
                 lines.append(f"{i}. {act}\n   📌 მოსალოდნელი: {exp}")
 
+            # 5) დავამატოთ აღწერა, ნაბიჯები, მიმდინარე და მოსალოდნელი შედეგები
             content = (
-                f"{desc}\n\n" + "\n".join(lines) +
-                f"\n\n🚨 მიმდინარე შედეგი:\n{res.get('comment','[კომენტარი]')}\n"
-                "✅ მოსალოდნელი შედეგი:\n[შეიყვანე მოსალოდნელი შედეგი]"
+                f"{desc}\n\n"
+                + "\n".join(lines)
+                + f"\n\n🚨 მიმდინარე შედეგი:\n{comment}\n"
+                + "✅ მოსალოდნელი შედეგი:\n[შეიყვანეთ მოსალოდნელი შედეგი აქ]"
             )
-            payload = {"name": f"[FAILED] {title}", "content": content, "status": CLICKUP_STATUS}
 
+            # 6) დავაგზავნოთ ClickUp-ში
+            payload = {
+                "name": f"[FAILED] {title}",
+                "content": content,
+                "status": CLICKUP_STATUS
+            }
             resp = requests.post(
                 f"https://api.clickup.com/api/v2/list/{CLICKUP_LIST_ID}/task",
-                headers=clickup_headers, json=payload
+                headers=clickup_headers,
+                json=payload
             )
-            # თუ ClickUp–მა მოიღო
-            if resp.status_code in (200,201):
+            if resp.status_code in (200, 201):
                 created += 1
             else:
-                # Debugging output, თუ აუცილებელია
                 logger.error(f"ClickUp error ({resp.status_code}): {resp.text}")
 
-        return jsonify(status="ok", message=f"{created} დავალება(ებ) გაიგზავნა ClickUp-ში."), 200
+        return jsonify(status="ok", message=f"{created} დავალება(ებ) შექმნილია ClickUp-ში."), 200
 
     except requests.HTTPError as he:
-        # თუ API დაფილდ აავტორმერია
         logger.exception("HTTP მოთხოვნის შეცდომა")
         return jsonify(status="error", message=f"HTTP შეცდომა: {he}"), 500
     except Exception as e:
-        # ნებისმიერი სხვა არაააპურად ხელმოსაჭერი შეცდომა
         logger.exception("უცნობი შეცდომა send_failed_cases()-ში")
         return jsonify(status="error", message=f"შიდა შეცდომა: {e}"), 500
 
+# ========================
+#  Entry point
+# ========================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
