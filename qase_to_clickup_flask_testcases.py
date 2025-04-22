@@ -28,44 +28,28 @@ PROJECT_CODE    = "DRESSUP"
 CLICKUP_LIST_ID = "901807146872"
 CLICKUP_STATUS  = "to do"
 
-# თუ ტოკენები არაა გამოსახული, დიდი პრობლემა გვაქვს
 if not QASE_API_TOKEN or not CLICKUP_TOKEN:
-    logger.error("QASE_API_TOKEN ან CLICKUP_TOKEN გარემო ცვლადებად არ არის განსაზღვრული.")
-    raise RuntimeError("გთხოვთ დააყენოთ QASE_API_TOKEN და CLICKUP_TOKEN.")
+    logger.error("QASE_API_TOKEN ან CLICKUP_TOKEN არ არის განსაზღვრული.")
+    raise RuntimeError("გთხოვთ დააყენოთ გარემოს ცვლადებად QASE_API_TOKEN და CLICKUP_TOKEN")
 
-qase_headers   = {"Token": QASE_API_TOKEN, "Content-Type": "application/json"}
+qase_headers    = {"Token": QASE_API_TOKEN, "Content-Type": "application/json"}
 clickup_headers = {"Authorization": CLICKUP_TOKEN, "Content-Type": "application/json"}
 
-# ========================
-#  ფუნქციები Qase API-თან
-# ========================
-def get_latest_run_id():
-    """ბირქმევა პროექტის ბოლო Test Run-ის ID"""
-    url = f"https://api.qase.io/v1/run/{PROJECT_CODE}?limit=1"
+# ===================================
+#   ფუნქციები Qase API დეფექტებისთვის
+# ===================================
+def get_defects():
+    """
+    ვიღებთ ყველა Defect-ს პროექტში Qase–დან.
+    თუ გინდა მხოლოდ Open ან Specific Status, დაამატე ?status=[0] ან სხვა.
+    """
+    url = f"https://api.qase.io/v1/defect/{PROJECT_CODE}"
     resp = requests.get(url, headers=qase_headers)
     resp.raise_for_status()
-    runs = resp.json().get("result", {}).get("entities", [])
-    return runs[0]["id"] if runs else None
-
-def get_failed_results(run_id):
-    """ბირქმევა ყველა провалებული შედეგი მოცემული Run ID-სთვის"""
-    url = (
-        f"https://api.qase.io/v1/result/{PROJECT_CODE}"
-        f"?run={run_id}&status=failed&limit=100"
-    )
-    resp = requests.get(url, headers=qase_headers)
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError:
-        if resp.status_code == 404:
-            # თუ 404-ია, უბრალოდ ცარიელ სიად ვუყურებთ
-            logger.warning(f"No results for run {run_id}, returning empty list.")
-            return []
-        raise
     return resp.json().get("result", {}).get("entities", [])
 
 def get_case_details(case_id):
-    """ბირქმევა კონკრეტული Test Case-ის სრული ინფორმაცია"""
+    """ტესტ‑ქეისის სრული დეტალების გამოძახება ID–ით"""
     url = f"https://api.qase.io/v1/case/{PROJECT_CODE}/{case_id}"
     resp = requests.get(url, headers=qase_headers)
     resp.raise_for_status()
@@ -76,54 +60,53 @@ def get_case_details(case_id):
 # ========================
 @app.route("/", methods=["GET"])
 def home():
-    # მისამართი მოთამაშეს პირდაპირ გადამისამართებს /send_failed-ზე
-    return redirect(url_for("send_failed_cases"))
+    # მაჩვენებს HTML ღილაკს ან პირდაპირ გადამისამართებს
+    return redirect(url_for("send_defected_cases"))
 
 @app.route("/send_testcases", methods=["GET"])
 def alias_send():
-    # რჩება backward compatibility
-    return redirect(url_for("send_failed_cases"))
+    return redirect(url_for("send_defected_cases"))
 
-@app.route("/send_failed", methods=["GET"])
-def send_failed_cases():
+@app.route("/send_defected", methods=["GET"])
+def send_defected_cases():
+    """
+    გამოვიძახოთ Qase დეფექტები, შემდეგ თითო დეფექტისთვის:
+     - გამოვიღოთ case_id
+     - ავიღოთ ტესტ‑ქეისის დეტალები
+     - დავამუშავოთ და გავაგზავნოთ ClickUp–ში
+    """
     try:
-        # 1) მივიღოთ ბოლო Run ID
-        run_id = get_latest_run_id()
-        if not run_id:
-            return jsonify(status="error", message="პროექტში ტესტი‑რანები არ არის."), 404
-
-        # 2) მივიღოთ მხოლოდ провалებული შედეგები
-        failed = get_failed_results(run_id)
-        if not failed:
-            return jsonify(status="ok", message="წარუმატებელი ტესტ‑ქეისები არ არის."), 200
+        defects = get_defects()
+        if not defects:
+            return jsonify(status="ok", message="დეფექტები არ არის."), 200
 
         created = 0
-        # 3) თითო провალებული შედეგი გადავამუშავოთ
-        for res in failed:
-            case    = get_case_details(res["case_id"])
+        for defect in defects:
+            case_id = defect.get("case_id")
+            if not case_id:
+                continue
+
+            case    = get_case_details(case_id)
             title   = (case.get("title") or "Untitled").strip()
             desc    = (case.get("description") or "").strip()
-            comment = (res.get("comment") or "[კომენტარი]").strip()
+            comment = (defect.get("comment") or "[კომენტარი]").strip()
 
             steps = case.get("steps", [])
-            # 4) დავამზადოთ ნაბიჯების სიები
             lines = ["📝 ნაბიჯები:"]
             for i, step in enumerate(steps, start=1):
                 act = (step.get("action") or "").strip()
                 exp = (step.get("expected_result") or "").strip()
                 lines.append(f"{i}. {act}\n   📌 მოსალოდნელი: {exp}")
 
-            # 5) დავამატოთ აღწერა, ნაბიჯები, მიმდინარე და მოსალოდნელი შედეგები
             content = (
                 f"{desc}\n\n"
                 + "\n".join(lines)
-                + f"\n\n🚨 მიმდინარე შედეგი:\n{comment}\n"
-                + "✅ მოსალოდნელი შედეგი:\n[შეიყვანეთ მოსალოდნელი შედეგი აქ]"
+                + f"\n\n🚨 დეფექტის კომენტარი:\n{comment}\n"
+                + "✅ სასურველი მოსალოდნელი შედეგი:\n[შეიყვანეთ]"
             )
 
-            # 6) დავაგზავნოთ ClickUp-ში
             payload = {
-                "name": f"[FAILED] {title}",
+                "name": f"[DEFECT] {title}",
                 "content": content,
                 "status": CLICKUP_STATUS
             }
@@ -143,7 +126,7 @@ def send_failed_cases():
         logger.exception("HTTP მოთხოვნის შეცდომა")
         return jsonify(status="error", message=f"HTTP შეცდომა: {he}"), 500
     except Exception as e:
-        logger.exception("უცნობი შეცდომა send_failed_cases()-ში")
+        logger.exception("უცნობი შეცდომა send_defected_cases()-ში")
         return jsonify(status="error", message=f"შიდა შეცდომა: {e}"), 500
 
 # ========================
