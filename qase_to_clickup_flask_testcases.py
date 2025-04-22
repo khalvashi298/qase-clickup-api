@@ -6,7 +6,7 @@ import requests
 app = Flask(__name__)
 
 # ========================
-#  ლოგირების კონფიგურაცია
+#  ლოგირება
 # ========================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -14,21 +14,15 @@ logger = logging.getLogger(__name__)
 # ========================
 #  პარამეტრები
 # ========================
-QASE_API_TOKEN = os.getenv(
-    "QASE_API_TOKEN",
-    "dd203d20ea7992c881633c69c093d0509997d86687fd317141fcfaba9bc5d71c"
-)
-CLICKUP_TOKEN = os.getenv(
-    "CLICKUP_TOKEN",
-    "pk_188468937_C74O5LJ8IMKNHTPMTC5QAHGGKW3U9I6Z"
-)
-PROJECT_CODE    = "DRESSUP"
-CLICKUP_LIST_ID = "901807146872"
-CLICKUP_STATUS  = "to do"
+QASE_API_TOKEN   = os.getenv("QASE_API_TOKEN", "dd203d20ea7992c881633c69c093d0509997d86687fd317141fcfaba9bc5d71c")
+CLICKUP_TOKEN    = os.getenv("CLICKUP_TOKEN", "pk_188468937_C74O5LJ8IMKNHTPMTC5QAHGGKW3U9I6Z")
+PROJECT_CODE     = "DRESSUP"
+CLICKUP_LIST_ID  = "901807146872"
+CLICKUP_STATUS   = "to do"
 
 if not QASE_API_TOKEN or not CLICKUP_TOKEN:
     logger.error("QASE_API_TOKEN ან CLICKUP_TOKEN არ არის განსაზღვრული.")
-    raise RuntimeError("გთხოვთ დააყენოთ გარემოს ცვლადებად QASE_API_TOKEN და CLICKUP_TOKEN")
+    raise RuntimeError("გახსენით გარემოს ცვლადებად QASE_API_TOKEN და CLICKUP_TOKEN")
 
 qase_headers    = {"Token": QASE_API_TOKEN, "Content-Type": "application/json"}
 clickup_headers = {"Authorization": CLICKUP_TOKEN, "Content-Type": "application/json"}
@@ -36,35 +30,19 @@ clickup_headers = {"Authorization": CLICKUP_TOKEN, "Content-Type": "application/
 # ========================
 #  Qase API ფუნქციები
 # ========================
-def get_latest_run_id():
-    """ბირქმევა პროექტის ბოლო Test Run-ის ID"""
-    url = f"https://api.qase.io/v1/run/{PROJECT_CODE}?limit=1"
+def get_defects():
+    """
+    ვიღებთ ყველა დეფექტს პროექტში (Defect-ებს).
+    """
+    url = f"https://api.qase.io/v1/defect/{PROJECT_CODE}?limit=100"
     resp = requests.get(url, headers=qase_headers)
     resp.raise_for_status()
-    runs = resp.json().get("result", {}).get("entities", [])
-    return runs[0]["id"] if runs else None
-
-def get_failed_results(run_id):
-    """
-    ბირქმევა ყველა провалებული შედეგი მოცემული Run ID-სთვის.
-    შემდეგ შეგვიძლია გავფილტროთ მხოლოდ r["defects"]-ის მქონე ობიექტები.
-    """
-    url = (
-        f"https://api.qase.io/v1/result/{PROJECT_CODE}"
-        f"?run={run_id}&status=failed&limit=100"
-    )
-    resp = requests.get(url, headers=qase_headers)
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError:
-        if resp.status_code == 404:
-            logger.warning(f"No results for run {run_id}, returning empty list.")
-            return []
-        raise
     return resp.json().get("result", {}).get("entities", [])
 
 def get_case_details(case_id):
-    """ტესტ‑ქეისის სრული დეტალების გამოძახება ID–ით"""
+    """
+    ვიღებთ ტესტ‑ქეისის სრულ ინფორმაციას ID-ით.
+    """
     url = f"https://api.qase.io/v1/case/{PROJECT_CODE}/{case_id}"
     resp = requests.get(url, headers=qase_headers)
     resp.raise_for_status()
@@ -75,40 +53,36 @@ def get_case_details(case_id):
 # ========================
 @app.route("/", methods=["GET"])
 def home():
-    # ძირითადი გადასამისამართებელია send_failed-ზე
-    return redirect(url_for("send_failed_cases"))
+    # პირდაპირ გადავამისამართებთ დეფექტების გადამტან ენდპოინტზე
+    return redirect(url_for("send_filed_cases"))
 
 @app.route("/send_testcases", methods=["GET"])
 def alias_send():
     # backward compatibility
-    return redirect(url_for("send_failed_cases"))
+    return redirect(url_for("send_filed_cases"))
 
-@app.route("/send_failed", methods=["GET"])
-def send_failed_cases():
+@app.route("/send_filed", methods=["GET"])
+def send_filed_cases():
     """
-    1) ვიღებთ ბოლო რანის ID-ს
-    2) ვიღებთ ყველა failed result-ს
-    3) ფილტრავთ მხოლოდ result-ებს, რომლებსაც აქვთ defects (defect-ები დაფიქსირებული)
-    4) თითო case_id-ზე ვიღებთ დეტალებს და აგზავნით ClickUp-ში
+    1) ვიღებთ ყველა დეფექტს Qase-დან
+    2) თითო დეფექტზე ავიღებთ case_id-ს
+    3) პასუხს გავაგზავნით ClickUp-ში ტესტ‑ქეისის სახელით და დეტალებით
     """
     try:
-        run_id = get_latest_run_id()
-        if not run_id:
-            return jsonify(status="error", message="პროექტში ტესტი‑რანები არ არის."), 404
-
-        failed = get_failed_results(run_id)
-        # 3) ფილტრაცია: მხოლოდ მათთვის, სადაც result["defects"] არ არის ცარიელი
-        failed_with_defect = [r for r in failed if r.get("defects")]
-        if not failed_with_defect:
-            return jsonify(status="ok", message="დეფექტის გარეშე ფეილი არ არის."), 200
+        defects = get_defects()
+        if not defects:
+            return jsonify(status="ok", message="დეფექტები არ არის."), 200
 
         created = 0
-        for res in failed_with_defect:
-            case    = get_case_details(res["case_id"])
+        for defect in defects:
+            case_id = defect.get("case_id")
+            if not case_id:
+                continue
+
+            case    = get_case_details(case_id)
             title   = (case.get("title") or "Untitled").strip()
             desc    = (case.get("description") or "").strip()
-            # თუ result-ში უშუალო კომენტარი არაა, ვაჩვენებთ defect ID-ს
-            comment = (res.get("comment") or f"Defects: {res.get('defects')}").strip()
+            comment = (defect.get("comment") or f"Defect ID: {defect.get('id')}").strip()
 
             steps = case.get("steps", [])
             lines = ["📝 ნაბიჯები:"]
@@ -120,12 +94,12 @@ def send_failed_cases():
             content = (
                 f"{desc}\n\n"
                 + "\n".join(lines)
-                + f"\n\n🚨 მიმდინარე შედეგი:\n{comment}\n"
+                + f"\n\n🚨 დეფექტის კომენტარი:\n{comment}\n"
                 + "✅ მოსალოდნელი შედეგი:\n[შეიყვანეთ მოსალოდნელი შედეგი აქ]"
             )
 
             payload = {
-                "name": f"[FAILED] {title}",
+                "name": f"[DEFECT] {title}",
                 "content": content,
                 "status": CLICKUP_STATUS
             }
@@ -145,7 +119,7 @@ def send_failed_cases():
         logger.exception("HTTP მოთხოვნის შეცდომა")
         return jsonify(status="error", message=f"HTTP შეცდომა: {he}"), 500
     except Exception as e:
-        logger.exception("უცნობი შეცდომა send_failed_cases()-ში")
+        logger.exception("უცნობი შეცდომა send_filed_cases()-ში")
         return jsonify(status="error", message=f"შიდა შეცდომა: {e}"), 500
 
 # ========================
