@@ -164,6 +164,159 @@ def send_testcases():
         content_type="application/json"
     )
 
+@app.route('/debug', methods=['GET'])
+def debug_qase():
+    results = {}
+    
+    # 1. შევამოწმოთ API ტოკენი და ტესტ რანები
+    runs_url = f"https://api.qase.io/v1/run/{PROJECT_CODE}?limit=10"
+    runs_response = requests.get(runs_url, headers=qase_headers)
+    
+    if runs_response.status_code != 200:
+        return jsonify({
+            "error": "ვერ მოიძებს ტესტ რანებს",
+            "status_code": runs_response.status_code,
+            "response": runs_response.text
+        })
+    
+    # შევამოწმოთ რანები
+    runs = runs_response.json().get("result", {}).get("entities", [])
+    runs_info = []
+    
+    for run in runs:
+        run_hash = run.get("hash")
+        run_info = {
+            "hash": run_hash,
+            "title": run.get("title"),
+            "status": run.get("status"),
+            "stats": run.get("stats", {})
+        }
+        
+        # შევამოწმოთ თითოეული რანის შედეგები
+        if run_hash:
+            result_url = f"https://api.qase.io/v1/result/{PROJECT_CODE}/{run_hash}?limit=100"
+            result_response = requests.get(result_url, headers=qase_headers)
+            
+            if result_response.status_code == 200:
+                results_data = result_response.json().get("result", {}).get("entities", [])
+                # მხოლოდ დაფეილებულები ავიღოთ
+                failed_results = [r for r in results_data if r.get("status") == "failed"]
+                
+                run_info["results_count"] = len(results_data)
+                run_info["failed_count"] = len(failed_results)
+                
+                # თუ გვაქვს დაფეილებული შედეგები, ერთი მაინც დავამატოთ დეტალურად
+                if failed_results:
+                    sample_failed = failed_results[0]
+                    case_id = sample_failed.get("case_id")
+                    run_info["sample_failed"] = {
+                        "case_id": case_id,
+                        "status": sample_failed.get("status"),
+                        "actual_result": sample_failed.get("actual_result")
+                    }
+                    
+                    # შევამოწმოთ ტესტ ქეისის დეტალები
+                    if case_id:
+                        case_url = f"https://api.qase.io/v1/case/{PROJECT_CODE}/{case_id}"
+                        case_response = requests.get(case_url, headers=qase_headers)
+                        
+                        if case_response.status_code == 200:
+                            case_data = case_response.json().get("result", {})
+                            run_info["sample_case_details"] = {
+                                "title": case_data.get("title"),
+                                "has_steps": len(case_data.get("steps", [])) > 0,
+                                "description": case_data.get("description", "")[:100] + "..." if case_data.get("description") else ""
+                            }
+                        else:
+                            run_info["case_error"] = f"Status: {case_response.status_code}, Response: {case_response.text[:200]}"
+                    
+            else:
+                run_info["results_error"] = f"Status: {result_response.status_code}, Response: {result_response.text[:200]}"
+        
+        runs_info.append(run_info)
+    
+    results["runs"] = runs_info
+    
+    # 2. შევამოწმოთ ClickUp კავშირი
+    clickup_test_url = f"https://api.clickup.com/api/v2/list/{CLICKUP_LIST_ID_DRESSUP}"
+    clickup_response = requests.get(clickup_test_url, headers=clickup_headers)
+    
+    results["clickup_test"] = {
+        "status_code": clickup_response.status_code,
+        "response": clickup_response.text[:200] if clickup_response.text else None
+    }
+    
+    return jsonify(results)
+
+@app.route('/force_send', methods=['GET'])
+def force_send():
+    # FORCE MANUAL TEST CASE - ხელით გაკეთებული ტესტ ქეისი
+    # თქვენ უკვე გაქვთ ტესტ ქეისი ID 2, ამიტომ მას გამოვიყენებთ
+    case_id = 2  # შეცვალეთ ეს იმ case ID-თ რომელიც გაქვთ!
+    
+    # ტესტ ქეისის დეტალების მიღება
+    case_url = f"https://api.qase.io/v1/case/{PROJECT_CODE}/{case_id}"
+    case_response = requests.get(case_url, headers=qase_headers)
+    
+    if case_response.status_code != 200:
+        return jsonify({"status": "error", "message": f"ვერ მიიღო ტესტ ქეისი {case_id}"})
+    
+    case_data = case_response.json().get("result", {})
+    title = case_data.get("title", "უსათაურო")
+    description = case_data.get("description", "")
+    steps = case_data.get("steps", [])
+    
+    # მოამზადე ნაბიჯები ClickUp-ისთვის
+    steps_output = ["ნაბიჯები:"]
+    for i, step in enumerate(steps):
+        action = step.get("action", "")
+        expected = step.get("expected_result", "")
+        steps_output.append(f"{i+1}. {action} ➔ {expected}")
+    steps_text = "\n".join(steps_output)
+    
+    # მოამზადე დავალების შინაარსი
+    content = f"""მოწყობილობა:
+{description}
+
+{steps_text}
+
+მიმდინარე შედეგი:
+ავტორიზაცია პრობლემა
+
+მოსალოდნელი შედეგი:
+{' '.join([step.get("expected_result", "") for step in steps])}
+
+დამატებითი ინფორმაცია:
+- ტესტ ქეისი: #{case_id}
+- მხოლოდ ტესტისთვის"""
+    
+    # გააგზავნე დავალება ClickUp-ში
+    payload = {
+        "name": f"[დეფექტი] {title}",
+        "content": content,
+        "status": CLICKUP_DEFAULT_STATUS,
+        "assignees": [188468937],  # შეცვალეთ თქვენი ID-ით
+        "priority": 3
+    }
+    
+    res = requests.post(
+        f"https://api.clickup.com/api/v2/list/{CLICKUP_LIST_ID_DRESSUP}/task",
+        headers=clickup_headers,
+        json=payload
+    )
+    
+    if res.status_code in [200, 201]:
+        return Response(
+            json.dumps({"status": "ok", "message": "ტესტ ქეისი გადავიდა ClickUp-ში."}, ensure_ascii=False),
+            content_type="application/json"
+        )
+    else:
+        return jsonify({
+            "status": "error",
+            "message": f"ClickUp-ში გაგზავნის შეცდომა: {res.status_code}",
+            "response": res.text
+        })
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
