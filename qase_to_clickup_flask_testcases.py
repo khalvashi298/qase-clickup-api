@@ -121,25 +121,28 @@ def alias_send():
 @app.route("/send_failed", methods=["GET"])
 def send_failed_cases():
     try:
-        run_id = get_latest_run_id()
-        if not run_id:
-            return jsonify(status="error", message="პროექტში ტესტი-რანები არ არის."), 404
-
-        failed = get_failed_results(run_id)
-        failed = [r for r in failed if r.get("defects")]
+        # 1) ვიღებთ ყველა დეფექტს Qase-დან
+        url = f"https://api.qase.io/v1/defect/{PROJECT_CODE}"
+        resp = requests.get(url, headers=qase_headers)
+        resp.raise_for_status()
+        defects = resp.json().get("result", {}).get("entities", [])
 
         created = 0
         skipped = []
 
-        for res in failed:
-            case_id = res.get("case_id")
-            case    = get_case_details(case_id)
-            title   = (case.get("title") or "Untitled").strip()
-            desc    = (case.get("description") or "").strip()
-            # Assignee და Priority
-            qase_author   = safe_get(res.get("author"), "name", "")
+        for defect in defects:
+            case_id = defect.get("case_id")
+            if not case_id:
+                continue
+
+            case = get_case_details(case_id)
+            title = (case.get("title") or "Untitled").strip()
+            desc  = (case.get("description") or "").strip()
+
+            # Assignee + Priority
+            qase_author   = safe_get(defect.get("author"), "name", "")
             assignee_id   = clickup_user_map.get(qase_author)
-            qase_priority = res.get("severity", "Low")
+            qase_priority = defect.get("severity", "Low")
             priority_id   = clickup_priority_map.get(qase_priority, clickup_priority_map["Low"])
 
             # ნაბიჯები მხოლოდ მოქმედებებით
@@ -148,18 +151,20 @@ def send_failed_cases():
                 act = (step.get("action") or "").strip()
                 lines.append(f"{i}. {act}")
 
-            # მიმდინარე და მოსალოდნელი შედეგი
-            current  = (res.get("comment") or "[კომენტარი]").strip()
-            expected = (res.get("actual_result") or "[მოსალოდნელი]").strip()
+            # დეფექტის კომენტარი როგორც მიმდინარე შედეგი
+            current = (defect.get("comment") or f"Defect ID: {defect.get('id')}").strip()
+
+            # მოსალოდნელი შედეგი თუ გაქვთ სხვა ველი, ან სტატიკური ტექსტი
+            expected = "[შეიყვანეთ მოსალოდნელი შედეგი]"
 
             # attachments
-            attachments = res.get("attachments", [])
+            attachments  = defect.get("attachments", [])
             attach_lines = [
                 f"- [{att.get('filename', att.get('url'))}]({att.get('url')})"
                 for att in attachments
             ]
 
-            # კონტენტი
+            # შეადგენთ content-ს
             content = (
                 f"{desc}\n\n"
                 + "\n".join(lines) + "\n\n"
@@ -171,7 +176,7 @@ def send_failed_cases():
 
             # ClickUp payload
             payload = {
-                "name":     f"[FAILED] {title}",
+                "name":     f"[DEFECT] {title}",
                 "content":  content,
                 "status":   CLICKUP_STATUS,
                 "priority": priority_id
@@ -179,15 +184,14 @@ def send_failed_cases():
             if assignee_id:
                 payload["assignees"] = [assignee_id]
 
-            resp = requests.post(
+            r2 = requests.post(
                 f"https://api.clickup.com/api/v2/list/{CLICKUP_LIST_ID}/task",
-                headers=clickup_headers,
-                json=payload
+                headers=clickup_headers, json=payload
             )
-            if resp.status_code in (200, 201):
+            if r2.status_code in (200, 201):
                 created += 1
             else:
-                skipped.append({"case_id": case_id, "error": resp.text})
+                skipped.append({"case_id": case_id, "error": r2.text})
 
         return jsonify(
             status="ok",
@@ -199,11 +203,4 @@ def send_failed_cases():
     except Exception as e:
         tb = traceback.format_exc()
         logger.exception(f"send_failed_cases error: {e}\n{tb}")
-        return jsonify(status="error", message=f"შიდა შეცდომა: {str(e)}"), 500
-
-# ========================
-# Entry point
-# ========================
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+        return jsonify(status="error", message=f"შიდა შეცდომა: {e}"), 500
