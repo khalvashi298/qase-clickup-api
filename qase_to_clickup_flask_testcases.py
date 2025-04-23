@@ -1,14 +1,18 @@
 import os
 import logging
+import json
 from flask import Flask, jsonify, redirect, url_for, Response
 import requests
 
 app = Flask(__name__)
 
 # ========================
-#  ლოგირების კონფიგურაცია
+#  ლოგირების კონფიგურაცია (კიდევ უფრო დეტალური)
 # ========================
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # ========================
@@ -42,9 +46,14 @@ clickup_headers = {"Authorization": CLICKUP_TOKEN, "Content-Type": "application/
 def get_latest_run_id():
     """ბირქმევა პროექტის ბოლო Test Run-ის ID"""
     url = f"https://api.qase.io/v1/run/{PROJECT_CODE}?limit=1"
+    logger.info(f"მოთხოვნა ბოლო რანებზე: {url}")
+    
     resp = requests.get(url, headers=qase_headers)
     resp.raise_for_status()
-    runs = resp.json().get("result", {}).get("entities", [])
+    data = resp.json()
+    logger.info(f"მიღებული პასუხი რანებზე: {json.dumps(data, indent=2, ensure_ascii=False)}")
+    
+    runs = data.get("result", {}).get("entities", [])
     
     # დამატებითი ლოგირება
     logger.info(f"მიღებული რანები: {len(runs)}")
@@ -52,6 +61,27 @@ def get_latest_run_id():
         logger.info(f"ბოლო რანის ID: {runs[0]['id']}")
     
     return runs[0]["id"] if runs else None
+
+def get_all_test_results(run_id):
+    """ბირქმევა ყველა შედეგი მოცემული Run ID-სთვის (სტატუსების მიუხედავად)"""
+    url = f"https://api.qase.io/v1/result/{PROJECT_CODE}?run={run_id}&limit=100"
+    logger.info(f"მოთხოვნა ყველა შედეგზე: {url}")
+    
+    resp = requests.get(url, headers=qase_headers)
+    resp.raise_for_status()
+    data = resp.json()
+    
+    logger.info(f"სულ შედეგები მოცემული რანისთვის: {data.get('result', {}).get('total', 0)}")
+    statuses = {}
+    for result in data.get('result', {}).get('entities', []):
+        status = result.get('status')
+        if status in statuses:
+            statuses[status] += 1
+        else:
+            statuses[status] = 1
+    
+    logger.info(f"შედეგების რაოდენობა სტატუსების მიხედვით: {statuses}")
+    return data
 
 def get_failed_results(run_id):
     """ბირქმევა ყველა провалებული შედეგი მოცემული Run ID-სთვის"""
@@ -71,13 +101,15 @@ def get_failed_results(run_id):
             resp.raise_for_status()
         except requests.HTTPError:
             if resp.status_code == 404:
-                # თუ 404-ია, უბრალოდ ცარიელ სიას ვუყურებთ
                 logger.warning(f"No results for run {run_id}, returning empty list.")
                 return []
             logger.error(f"HTTP შეცდომა შედეგების მიღებისას: {resp.status_code}, {resp.text}")
             raise
         
-        results = resp.json().get("result", {})
+        data = resp.json()
+        logger.info(f"მიღებული პასუხი failed შედეგებზე: {json.dumps(data, indent=2, ensure_ascii=False)}")
+        
+        results = data.get("result", {})
         entities = results.get("entities", [])
         
         # დამატებული ლოგირება შედეგების რაოდენობაზე
@@ -98,7 +130,10 @@ def get_failed_results(run_id):
     # დამატებული ლოგირება თითოეული შედეგის ტიპისთვის
     for i, result in enumerate(all_failed):
         case_id = result.get("case_id")
-        logger.info(f"Failed შედეგი #{i+1}: case_id={case_id}")
+        status = result.get("status")
+        comment = result.get("comment", "")
+        logger.info(f"Failed შედეგი #{i+1}: case_id={case_id}, status={status}")
+        logger.info(f"კომენტარი: {comment[:100]}...")
     
     return all_failed
 
@@ -110,23 +145,89 @@ def get_case_details(case_id):
     resp = requests.get(url, headers=qase_headers)
     resp.raise_for_status()
     
-    case = resp.json().get("result", {})
+    data = resp.json()
+    logger.info(f"კეისის დეტალები: {json.dumps(data, indent=2, ensure_ascii=False)}")
+    
+    case = data.get("result", {})
     logger.info(f"მიღებულია კეისი {case_id}: {case.get('title', 'უსათაურო')}")
     
+    # დამატებითი ინფორმაცია
+    suite_id = case.get('suite_id')
+    logger.info(f"კეისი {case_id} ეკუთვნის სუიტს {suite_id}")
+    
     return case
+
+def get_suite_details(suite_id):
+    """მიიღეთ სუიტის დეტალები"""
+    if not suite_id:
+        return None
+        
+    url = f"https://api.qase.io/v1/suite/{PROJECT_CODE}/{suite_id}"
+    logger.info(f"მოთხოვნა სუიტის დეტალებზე: {url}")
+    
+    resp = requests.get(url, headers=qase_headers)
+    if resp.status_code == 404:
+        logger.warning(f"სუიტი {suite_id} არ არსებობს")
+        return None
+    
+    resp.raise_for_status()
+    data = resp.json()
+    logger.info(f"სუიტის დეტალები: {json.dumps(data, indent=2, ensure_ascii=False)}")
+    
+    return data.get("result", {})
 
 # ========================
 #  Route-ები
 # ========================
 @app.route("/", methods=["GET"])
 def home():
-    # მისამართი მოთამაშეს პირდაპირ გადამისამართებს /send_failed-ზე
     return redirect(url_for("send_failed_cases"))
 
 @app.route("/send_testcases", methods=["GET"])
 def alias_send():
-    # რჩება backward compatibility
     return redirect(url_for("send_failed_cases"))
+
+@app.route("/debug", methods=["GET"])
+def debug_test_results():
+    """დიაგნოსტიკური მარშრუტი, რომელიც აჩვენებს ინფორმაციას ყველა შედეგზე"""
+    try:
+        run_id = get_latest_run_id()
+        if not run_id:
+            return jsonify(status="error", message="პროექტში ტესტი‑რანები არ არის."), 404
+            
+        # მივიღოთ ყველა შედეგი
+        all_results = get_all_test_results(run_id)
+        
+        # მივიღოთ წარუმატებელი შედეგები
+        failed = get_failed_results(run_id)
+        
+        case_details = []
+        # თითოეული ფეილისთვის მივიღოთ დეტალები
+        for res in failed:
+            case_id = res.get("case_id")
+            case = get_case_details(case_id)
+            suite_id = case.get("suite_id")
+            suite = get_suite_details(suite_id)
+            
+            case_details.append({
+                "case_id": case_id,
+                "title": case.get("title"),
+                "suite_id": suite_id,
+                "suite_name": suite.get("title") if suite else "N/A",
+                "status": res.get("status"),
+                "comment": res.get("comment")
+            })
+        
+        return jsonify({
+            "run_id": run_id,
+            "total_results": all_results.get("result", {}).get("total", 0),
+            "failed_count": len(failed),
+            "failed_details": case_details
+        }), 200
+        
+    except Exception as e:
+        logger.exception("შეცდომა დიაგნოსტიკურ მარშრუტში")
+        return jsonify(status="error", message=f"შიდა შეცდომა: {e}"), 500
 
 @app.route("/send_failed", methods=["GET"])
 def send_failed_cases():
@@ -146,18 +247,27 @@ def send_failed_cases():
         created = 0
         failed_to_create = 0
         
+        # სიები შექმნილი და გამოტოვებული კეისებისთვის
+        created_cases = []
+        skipped_cases = []
+        
         # 3) თითო провალებული შედეგი გადავამუშავოთ
         for res in failed:
             try:
                 case_id = res["case_id"]
                 logger.info(f"ვამუშავებთ case_id {case_id}")
                 
-                case    = get_case_details(case_id)
-                title   = (case.get("title") or "Untitled").strip()
-                desc    = (case.get("description") or "").strip()
+                case = get_case_details(case_id)
+                title = (case.get("title") or "Untitled").strip()
+                desc = (case.get("description") or "").strip()
                 comment = (res.get("comment") or "[კომენტარი]").strip()
                 
-                logger.info(f"დამუშავება: {title}")
+                # სუიტის დეტალები (დამატებით)
+                suite_id = case.get("suite_id")
+                suite = get_suite_details(suite_id)
+                suite_name = suite.get("title", "უცნობი სუიტი") if suite else "უცნობი სუიტი"
+                
+                logger.info(f"დამუშავება: {title}, სუიტი: {suite_name}")
 
                 steps = case.get("steps", [])
                 # 4) დავამზადოთ ნაბიჯების სიები
@@ -169,6 +279,7 @@ def send_failed_cases():
 
                 # 5) დავამატოთ აღწერა, ნაბიჯები, მიმდინარე და მოსალოდნელი შედეგები
                 content = (
+                    f"სუიტი: {suite_name}\n\n"
                     f"{desc}\n\n"
                     + "\n".join(lines)
                     + f"\n\n🚨 მიმდინარე შედეგი:\n{comment}\n"
@@ -177,12 +288,14 @@ def send_failed_cases():
 
                 # 6) დავაგზავნოთ ClickUp-ში
                 payload = {
-                    "name": f"[FAILED] {title}",
+                    "name": f"[FAILED] {title} (case_id: {case_id})",
                     "content": content,
                     "status": CLICKUP_STATUS
                 }
                 
                 logger.info(f"ClickUp API გაგზავნა დავალებისთვის: {title}")
+                logger.info(f"Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
+                
                 resp = requests.post(
                     f"https://api.clickup.com/api/v2/list/{CLICKUP_LIST_ID}/task",
                     headers=clickup_headers,
@@ -190,22 +303,40 @@ def send_failed_cases():
                 )
                 
                 if resp.status_code in (200, 201):
-                    task_id = resp.json().get('id', 'unknown')
+                    response_data = resp.json()
+                    task_id = response_data.get('id', 'unknown')
                     logger.info(f"შეიქმნა ClickUp დავალება ID={task_id}: {title}")
+                    logger.info(f"ClickUp პასუხი: {json.dumps(response_data, indent=2, ensure_ascii=False)}")
                     created += 1
+                    created_cases.append({
+                        "case_id": case_id,
+                        "title": title,
+                        "clickup_task_id": task_id
+                    })
                 else:
                     logger.error(f"ClickUp შეცდომა ({resp.status_code}): {resp.text}")
                     failed_to_create += 1
+                    skipped_cases.append({
+                        "case_id": case_id,
+                        "title": title,
+                        "error": f"HTTP {resp.status_code}: {resp.text}"
+                    })
                     
             except Exception as e:
                 logger.exception(f"შეცდომა მოხდა case_id {res.get('case_id')} დამუშავებისას")
                 failed_to_create += 1
+                skipped_cases.append({
+                    "case_id": res.get('case_id'),
+                    "error": str(e)
+                })
 
         return jsonify(
             status="ok", 
             message=f"{created} დავალება(ებ) შექმნილია ClickUp-ში. {failed_to_create} ვერ შეიქმნა.",
             created=created,
-            failed=failed_to_create
+            failed=failed_to_create,
+            created_cases=created_cases,
+            skipped_cases=skipped_cases
         ), 200
 
     except requests.HTTPError as he:
