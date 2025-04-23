@@ -193,7 +193,7 @@ def send_failed_cases():
             else:
                 skipped.append({"case_id": case_id, "error": r2.text})
 
-        return jsonify(
+          return jsonify(
             status="ok",
             message=f"{created} დავალება(ებ) შექმნილია ClickUp-ში.",
             created=created,
@@ -204,3 +204,10 @@ def send_failed_cases():
         tb = traceback.format_exc()
         logger.exception(f"send_failed_cases error: {e}\n{tb}")
         return jsonify(status="error", message=f"შიდა შეცდომა: {e}"), 500
+
+# აქ უნდა გაიდგეს 0 გვერდზე, არ უნდა იყოს indent–ში!
+if __name__ == "__main__":
+    # Render აწვდის PORT გარემოს ცვლადში
+    port = int(os.environ.get("PORT", 5000))
+    # host=0.0.0.0–ზე რომ გარედანაც მიუკვეთონ
+    app.run(host="0.0.0.0", port=port, debug=True)
